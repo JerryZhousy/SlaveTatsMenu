@@ -1,0 +1,24 @@
+[b][size=4]Credits[/size][/b]
+
+[i]What the plugin talks to[/i]
+[list]
+[*][b]nopse0[/b] - [url=https://github.com/nopse0/SlaveTatsNG]SlaveTatsNG[/url] and the C++ interface it publishes, which this plugin drives
+[*][b]murfk[/b] - the original SlaveTats, the mod SlaveTatsNG installs over, and everyone who kept the tattoo packs coming
+[*][b]SilverIce[/b] and [b]ryobg[/b] - [url=https://github.com/ryobg/JContainers]JContainers[/url], the storage layer the tattoo ledger lives in
+[*][b]Thiago Kaqiue (QTR-Modding)[/b] - [url=https://www.nexusmods.com/skyrimspecialedition/mods/120352]SKSE Menu Framework[/url], which hosts the window and draws the interface
+[*][b]The SKSE team[/b] - obviously
+[/list]
+
+[i]Code compiled into the DLL[/i] - license texts for all of these ship with the download in [code]LICENSES/[/code]
+[list]
+[*][b]The CommonLibSSE authors[/b] - [url=https://github.com/CharmedBaryon/CommonLibSSE]CommonLibSSE-NG[/url], which the plugin is built and linked against
+[*][b]Omar Cornut and the Dear ImGui contributors[/b] - the ImGui API headers
+[*][b]Niels Lohmann[/b] - [url=https://github.com/nlohmann/json]JSON for Modern C++[/url] 3.11.3, for the cache and preset files
+[*][b]Brodie Thiesfield[/b] - [url=https://github.com/brofield/simpleini]SimpleIni[/url], the INI reader
+[*][b]Tsuda Kageyu[/b] - [url=https://github.com/TsudaKageyu/minhook]MinHook[/url], whose hde64 instruction decoder CommonLibSSE vendors
+[*][b]Valve[/b] - [url=https://github.com/ValveSoftware/openvr]OpenVR[/url], linked because the build covers the VR runtimes
+[*][b]Microsoft[/b] - DirectXTK and DirectXMath, linked by CommonLibSSE
+[*][b]Gabi Melman[/b] and [b]Victor Zverovich[/b] - spdlog and {fmt}, reached through CommonLibSSE's logging
+[/list]
+
+Nothing from SlaveTatsNG, SlaveTats, JContainers or SKSE Menu Framework is redistributed here; all four are separate dependencies you install yourself. The DLL does contain compiled-in code from the libraries above, which is why their license texts are included, and [code]THIRD_PARTY.md[/code] in the download names the exact revisions plus the two vendored headers that carry local changes.

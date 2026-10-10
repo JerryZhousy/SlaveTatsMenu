@@ -1,0 +1,32 @@
+SlaveTatsMenu
+Copyright (c) 2026 4x9M133
+
+All rights reserved, except for the permissions granted below.
+
+These terms cover the code written for this project: src/, tools/, the build files, and the
+SlaveTatsMenu.dll compiled from them. Third-party components keep their own licenses, which are
+listed in THIRD_PARTY.md and reproduced in LICENSES/.
+
+Permissions
+
+    Re-upload                                  Allowed, credit required
+    Conversion (other games)                   Allowed, credit required
+    Modification                               Allowed, credit required
+    Asset use                                  Allowed, credit required
+    Earning donation points (using assets)     Ask me first
+    Monetisation (third-party)                 Not allowed
+
+"Credit required" means the credit names 4x9M133 and links back to this mod's page, and that this
+file together with the notices in LICENSES/ stays with whatever is redistributed. Works built on
+these permissions may not be sold, paywalled, or placed behind a paid tier.
+
+Source
+
+The source is published on GitHub: fork it, patch it, build your own version. The GPL-licensed
+parts of the binary are not this project's to license; they are CommonLibSSE-NG at the upstream
+revision named in THIRD_PARTY.md, whose source is public.
+
+No warranty
+
+The plugin is provided as is, without warranty of any kind. It edits another mod's data through
+JContainers, so keep a backup of any save you care about before using it.

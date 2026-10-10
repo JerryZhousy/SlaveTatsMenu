@@ -49,8 +49,8 @@ DefaultAlpha = 1.0
 Language = en           ; en / zh
 
 [UI]
-WindowWidth = 960.0
-WindowHeight = 650.0
+WindowWidth = 1280.0
+WindowHeight = 720.0
 SlotRefreshMs = 250     ; how often the slot list is rebuilt
 
 [Debug]
@@ -106,18 +106,22 @@ include/              vendored interface headers (see below)
 
 ## Third-party code
 
-Nothing from SlaveTatsNG, JContainers, the original SlaveTats or SKSE Menu Framework is redistributed in the release archive; the release contains only this plugin's DLL and an INI. The source tree vendors these headers:
+Nothing from SlaveTatsNG, JContainers, the original SlaveTats or SKSE Menu Framework is redistributed in the release archive; the release contains only this plugin's DLL and an INI. The source tree vendors the first group of headers below, and the DLL statically links the second group. License texts are in `LICENSES/`; `THIRD_PARTY.md` records versions, revisions and the local changes made to two of the headers.
 
-| Path | Project | License |
+| Path / component | Project | License |
 |---|---|---|
 | `include/SimpleIni.h` | SimpleIni | MIT |
-| `include/nlohmann/json.hpp` | JSON for Modern C++ | MIT |
-| `include/imgui*.h`, `include/imstb_*.h` | Dear ImGui 1.89.6 | MIT |
-| `include/JContainers/jc_interface.h` | JContainers | MIT |
-| `include/SlaveTatsNG_Interface.h` | SlaveTatsNG, used exactly as published | Apache-2.0 |
-| `include/SKSEMenuFramework.h` | SKSE Menu Framework, the consumer header its author publishes | no license file upstream |
-| build dependency | CommonLibSSE-NG | MIT |
+| `include/nlohmann/json.hpp` | JSON for Modern C++ 3.11.3 | MIT |
+| `include/imgui*.h`, `include/imstb_*.h` | Dear ImGui 1.89.6, kept for reference only | MIT |
+| `include/JContainers/*.h` | JContainers, constants at v4.2.9 | MIT |
+| `include/SlaveTatsNG_Interface.h` | SlaveTatsNG, plus a local `#undef interface` guard | Apache-2.0 |
+| `include/SKSEMenuFramework.h` | SKSE Menu Framework consumer header, locally modified | LGPL-2.1 |
+| linked into the DLL | CommonLibSSE-NG 6.7.1 | GPL-3.0-or-later with linking exceptions |
+| linked into the DLL | spdlog, {fmt} | MIT |
+| linked into the DLL | DirectXTK, DirectXMath | MIT |
+| linked into the DLL | hde64, vendored from MinHook | BSD-2-Clause |
+| linked into the DLL | OpenVR | BSD-3-Clause |
 
 ## Credits
 
-SlaveTatsNG and its C++ interface by nopse0. The original SlaveTats by murfk. JContainers by ryobg. SKSE Menu Framework by Thiago. SKSE by the SKSE team, and everyone who kept the tattoo packs coming.
+SlaveTatsNG and its C++ interface by nopse0. The original SlaveTats by murfk. JContainers by ryobg and SilverIce. SKSE Menu Framework by Thiago. SKSE by the SKSE team, and everyone who kept the tattoo packs coming. On the code side: CommonLibSSE-NG and the CommonLibSSE authors, Dear ImGui by Omar Cornut and contributors, JSON for Modern C++ by Niels Lohmann, SimpleIni by Brodie Thiesfield, MinHook and hde64 by Tsuda Kageyu, OpenVR by Valve.

@@ -1,5 +1,20 @@
 #pragma once
 
+// SKSEMenuFramework.h - consumer header for SKSE Menu Framework by QTR-Modding
+// (https://github.com/QTR-Modding/SKSE-Menu-Framework-3-API), GNU LGPL v2.1,
+// see LICENSES/SKSEMenuFramework-API.txt. The framework itself is a separate, user-installed
+// DLL; this header only declares the functions it exports, which are resolved with
+// GetProcAddress at runtime. The framework's own source is GPL-3.0.
+//
+// This copy is modified. Changes made 2026-10-09 against the published header (11411 lines here
+// against 11214 upstream):
+//   - the module lookup is named GetMenuFrameworkHandle and reached through a `menuFramework`
+//     macro, and it also tries the "SKSEMenuFramework.dll" module name as a fallback
+//   - <filesystem> was added for the Data/SKSE/Plugins install check in IsInstalled()
+//   - a `namespace ImGui = ImGuiMCP` alias and a using-directive were appended at the end
+//   - a few bindings were added (igGetStyle, igPushStyleVar_Vec2 and friends)
+// No upstream function was removed or reordered.
+
 #include <windows.h>
 #include <codecvt>
 #include <locale>

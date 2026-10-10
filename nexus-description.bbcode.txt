@@ -131,22 +131,41 @@ CallTrace = 1[/code]
 Visual Studio 2022, CMake 3.22+, vcpkg with the [code]x64-windows-static-md[/code] triplet, and a CommonLibSSE-NG checkout. The tree also builds an offline self-test that exercises the data layer against a real [code]slavetats_cache.json[/code] without the game. The source is public: [url=https://github.com/JerryZhousy/SlaveTatsMenu]github.com/JerryZhousy/SlaveTatsMenu[/url]
 
 [b][size=4]Credits[/size][/b]
+
+[i]What the plugin talks to[/i]
 [list]
-[*][b]nopse0[/b] - SlaveTatsNG and its published C++ interface, which is what this plugin is built on
-[*][b]murfk[/b] - the original SlaveTats, and everyone who kept the tattoo packs coming
-[*][b]ryobg[/b] - JContainers
-[*][b]Thiago[/b] - SKSE Menu Framework, without which there would be no window
+[*][b]nopse0[/b] - [url=https://github.com/nopse0/SlaveTatsNG]SlaveTatsNG[/url] and the C++ interface it publishes, which this plugin drives
+[*][b]murfk[/b] - the original SlaveTats, the mod SlaveTatsNG installs over, and everyone who kept the tattoo packs coming
+[*][b]SilverIce[/b] and [b]ryobg[/b] - [url=https://github.com/ryobg/JContainers]JContainers[/url], the storage layer the tattoo ledger lives in
+[*][b]Thiago Kaqiue (QTR-Modding)[/b] - [url=https://www.nexusmods.com/skyrimspecialedition/mods/120352]SKSE Menu Framework[/url], which hosts the window and draws the interface
 [*][b]The SKSE team[/b] - obviously
 [/list]
 
-This plugin redistributes no files from any of them. The interface header it compiles against is used as published by SlaveTatsNG.
+[i]Code compiled into the DLL[/i] - license texts for all of these ship with the download in [code]LICENSES/[/code]
+[list]
+[*][b]The CommonLibSSE authors[/b] - [url=https://github.com/CharmedBaryon/CommonLibSSE]CommonLibSSE-NG[/url], which the plugin is built and linked against
+[*][b]Omar Cornut and the Dear ImGui contributors[/b] - the ImGui API headers
+[*][b]Niels Lohmann[/b] - [url=https://github.com/nlohmann/json]JSON for Modern C++[/url] 3.11.3, for the cache and preset files
+[*][b]Brodie Thiesfield[/b] - [url=https://github.com/brofield/simpleini]SimpleIni[/url], the INI reader
+[*][b]Tsuda Kageyu[/b] - [url=https://github.com/TsudaKageyu/minhook]MinHook[/url], whose hde64 instruction decoder CommonLibSSE vendors
+[*][b]Valve[/b] - [url=https://github.com/ValveSoftware/openvr]OpenVR[/url], linked because the build covers the VR runtimes
+[*][b]Microsoft[/b] - DirectXTK and DirectXMath, linked by CommonLibSSE
+[*][b]Gabi Melman[/b] and [b]Victor Zverovich[/b] - spdlog and {fmt}, reached through CommonLibSSE's logging
+[/list]
+
+Nothing from SlaveTatsNG, SlaveTats, JContainers or SKSE Menu Framework is redistributed here; all four are separate dependencies you install yourself. The interface header this plugin compiles against is SlaveTatsNG's, with one local [code]#undef interface[/code] guard added for MSVC. The DLL does contain compiled-in code from the libraries listed above, which is why their license texts are included, and [code]THIRD_PARTY.md[/code] names the exact revisions.
 
 [b][size=4]Permissions[/size][/b]
 [list]
-[*]Translation, patches and inclusion in mod packs or lists: fine, as long as this page is credited and linked.
-[*]Reuploading the plugin elsewhere: ask me first.
-[*]The source is on GitHub - fork it, patch it, build your own version from it.
+[*][b]Re-upload[/b]: allowed, credit required
+[*][b]Conversion (other games)[/b]: allowed, credit required
+[*][b]Modification[/b]: allowed, credit required
+[*][b]Asset use[/b]: allowed, credit required
+[*][b]Earning donation points (using assets)[/b]: ask me first
+[*][b]Monetisation (third-party)[/b]: not allowed
 [/list]
+
+Credit means naming 4x9M133 and linking back to this page, and keeping [code]LICENSE[/code] and [code]LICENSES/[/code] with whatever you redistribute. The source is public - fork it, patch it, build your own version: [url=https://github.com/JerryZhousy/SlaveTatsMenu]github.com/JerryZhousy/SlaveTatsMenu[/url]. The GPL-licensed parts of the binary are not mine to license; [code]THIRD_PARTY.md[/code] names them and their revisions.
 
 [b][size=4]Feedback[/size][/b]
 Bug reports are welcome and much easier to act on with two things attached: the SlaveTatsMenu.log from the session, and which panel and button you were on. If a tattoo is in the ledger but not on the body, turn on the probe first and the log will usually name the cause by itself.

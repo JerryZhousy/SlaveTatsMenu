@@ -10,6 +10,9 @@ CMakeCache.txt
 CMakeFiles/
 vcpkg_installed/
 
+# Release archives produced by tools/package-release.ps1
+dist/
+
 # Locally built plugin plus the per-user INI. Releases carry both.
 SKSE/
 

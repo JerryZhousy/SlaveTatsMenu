@@ -1,5 +1,11 @@
 #pragma once
 
+// SlaveTatsNG_Interface.h - published by nopse0 as part of SlaveTatsNG
+// (https://github.com/nopse0/SlaveTatsNG), Apache License 2.0, see LICENSES/Apache-2.0.txt.
+//
+// This copy is modified. Change made 2026-10-09: the #ifdef interface guard below was added,
+// because 'interface' is a macro in combaseapi.h under MSVC and would otherwise rewrite the
+// namespace name in this header. That guard is the only difference from the upstream file.
 #ifdef interface
 #undef interface
 #endif
