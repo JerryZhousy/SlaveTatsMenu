@@ -104,8 +104,8 @@ DefaultAlpha = 1.0      ; 新纹身的默认透明度
 Language = en           ; en / zh，FOMOD 安装包按选择写好这一行
 
 [UI]
-WindowWidth = 960.0
-WindowHeight = 650.0
+WindowWidth = 1280.0
+WindowHeight = 720.0
 SlotRefreshMs = 250     ; 槽位快照刷新间隔
 
 [Debug]

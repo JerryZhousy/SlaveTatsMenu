@@ -37,8 +37,8 @@ namespace stm
         defaultColor = static_cast<std::uint32_t>(ini.GetLongValue("General", "DefaultColor", 0x000000));
         language = std::string_view{ ini.GetValue("General", "Language", "en") } == "zh" ? Language::kChinese : Language::kEnglish;
 
-        windowWidth = static_cast<float>(ini.GetDoubleValue("UI", "WindowWidth", 960.0));
-        windowHeight = static_cast<float>(ini.GetDoubleValue("UI", "WindowHeight", 650.0));
+        windowWidth = static_cast<float>(ini.GetDoubleValue("UI", "WindowWidth", 1280.0));
+        windowHeight = static_cast<float>(ini.GetDoubleValue("UI", "WindowHeight", 720.0));
         slotRefreshMs = static_cast<int>(ini.GetLongValue("UI", "SlotRefreshMs", 250));
 
         probeEnabled = ini.GetBoolValue("Debug", "Probe", false);

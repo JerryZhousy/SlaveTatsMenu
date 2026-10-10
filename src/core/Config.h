@@ -19,8 +19,8 @@ namespace stm
         Language      language = Language::kEnglish;
 
         // [UI]
-        float windowWidth = 960.0f;
-        float windowHeight = 650.0f;
+        float windowWidth = 1280.0f;
+        float windowHeight = 720.0f;
         int   slotRefreshMs = 250;  // how often the applied-slot snapshot is rebuilt
 
         // [Debug]
