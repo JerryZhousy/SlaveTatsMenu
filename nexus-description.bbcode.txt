@@ -25,7 +25,9 @@ Install it like any other SKSE plugin, with a mod manager or by hand:
 [code]Data\SKSE\Plugins\SlaveTatsMenu.dll
 Data\SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini[/code]
 
-The INI is written with defaults on first launch if it is not there. There is nothing to switch on in the MCM, no ESP to enable, and no load order position to worry about.
+The archive is a FOMOD: it asks for the interface language and writes the matching INI, so there is nothing to hand-edit afterwards. Installing by hand works too - the plugin writes the INI with defaults on first launch if it is missing. There is nothing to switch on in the MCM, no ESP to enable, and no load order position to worry about.
+
+Source and release: [url=https://github.com/JerryZhousy/SlaveTatsMenu]github.com/JerryZhousy/SlaveTatsMenu[/url]
 
 [b][size=4]Opening the window[/size][/b]
 [list]
@@ -126,7 +128,7 @@ CallTrace = 1[/code]
 [/list]
 
 [b][size=4]Building from source[/size][/b]
-Visual Studio 2022, CMake 3.22+, vcpkg with the [code]x64-windows-static-md[/code] triplet, and a CommonLibSSE-NG checkout. The tree also builds an offline self-test that exercises the data layer against a real [code]slavetats_cache.json[/code] without the game. Sources are on request; see the permissions below.
+Visual Studio 2022, CMake 3.22+, vcpkg with the [code]x64-windows-static-md[/code] triplet, and a CommonLibSSE-NG checkout. The tree also builds an offline self-test that exercises the data layer against a real [code]slavetats_cache.json[/code] without the game. The source is public: [url=https://github.com/JerryZhousy/SlaveTatsMenu]github.com/JerryZhousy/SlaveTatsMenu[/url]
 
 [b][size=4]Credits[/size][/b]
 [list]
@@ -143,7 +145,7 @@ This plugin redistributes no files from any of them. The interface header it com
 [list]
 [*]Translation, patches and inclusion in mod packs or lists: fine, as long as this page is credited and linked.
 [*]Reuploading the plugin elsewhere: ask me first.
-[*]If you want the source to build your own version, ask and it is yours.
+[*]The source is on GitHub - fork it, patch it, build your own version from it.
 [/list]
 
 [b][size=4]Feedback[/size][/b]
