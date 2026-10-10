@@ -1,0 +1,17 @@
+# Build output
+build/
+*.obj
+*.pdb
+*.lib
+*.exp
+*.ilk
+.vs/
+CMakeCache.txt
+CMakeFiles/
+vcpkg_installed/
+
+# Locally built plugin plus the per-user INI. Releases carry both.
+SKSE/
+
+# Mod Organizer 2 metadata
+meta.ini

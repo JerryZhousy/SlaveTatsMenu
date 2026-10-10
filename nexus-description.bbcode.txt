@@ -1,0 +1,150 @@
+[size=6][b]SlaveTats Menu[/b][/size]
+[size=4]An in-game tattoo editor for SlaveTatsNG. One DLL, no ESP, no plugin slot.[/size]
+
+SlaveTats does its job through the MCM, but the MCM is a stack of dropdowns: one tattoo at a time, one colour at a time, and walking back through the menu just to change a colour gets old fast. This plugin puts the same data into a Dear ImGui window that opens on top of the running game.
+
+From there you can search the whole library by body area, mod or name, see which overlay slots the current actor is actually using, recolour or remove tattoos that are already applied, put a tattoo into a specific slot instead of "wherever it fits", and save an actor's entire tattoo set as a preset that applies to someone else in two clicks.
+
+It talks to SlaveTatsNG's C++ interface directly through SKSE rather than going through Papyrus, and it keeps the catalogue in memory with virtual scrolling, so a library with a few thousand entries still scrolls smoothly. Nothing here needs an ESP: the whole mod is one DLL and an INI.
+
+[b][size=4]Requirements[/size][/b]
+[list]
+[*][b]SKSE64[/b] matching your game version - [url=https://skse.silverlock.org/]skse.silverlock.org[/url]
+[*][b]SlaveTatsNG[/b] (required) - [url=https://github.com/nopse0/SlaveTatsNG]github.com/nopse0/SlaveTatsNG[/url]. This plugin drives SlaveTatsNG's published C++ interface, so it is not optional.
+[*][b]SlaveTats[/b] by murfk (LoversLab) - the original mod, which SlaveTatsNG installs over. Its ESP plus your tattoo packs are where the actual tattoos come from.
+[*][b]JContainers SE[/b] (required) - [url=https://www.nexusmods.com/skyrimspecialedition/mods/16495]Nexus 16495[/url]. SlaveTats' storage layer; without it recolouring and presets do not work.
+[*][b]SKSE Menu Framework[/b] (required) - [url=https://www.nexusmods.com/skyrimspecialedition/mods/120352]Nexus 120352[/url]. It hosts the window and provides the ImGui renderer.
+[*][b]RaceMenu[/b] - not required by this plugin specifically, but SlaveTats needs it, and this plugin reads the per-area slot counts from RaceMenu's skee64.ini (falling back to conservative built-in values if that file is missing).
+[/list]
+
+The DLL is built against CommonLibSSE-NG, so it covers SE 1.5.39+ and AE. SE 1.5.97 is the runtime this has actually been played through; AE should load, but it is untested here, so treat it as unverified. VR is not supported.
+
+[b][size=4]Installation[/size][/b]
+Install it like any other SKSE plugin, with a mod manager or by hand:
+
+[code]Data\SKSE\Plugins\SlaveTatsMenu.dll
+Data\SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini[/code]
+
+The INI is written with defaults on first launch if it is not there. There is nothing to switch on in the MCM, no ESP to enable, and no load order position to worry about.
+
+[b][size=4]Opening the window[/size][/b]
+[list]
+[*][b]F10[/b] toggles the floating window. This is [i]ToggleKey[/i] in the INI and it is a DirectInput scan code, so 0x44 means F10.
+[*]Or open SKSE Menu Framework's own menu and pick [b]SlaveTats -> Tattoo Manager[/b].
+[/list]
+
+The hotkey is ignored while the console is up or while another blocking menu is open.
+
+[b][size=4]The window, panel by panel[/size][/b]
+
+[b]Target row[/b] - who you are editing. [i]Pick crosshair NPC[/i] takes whoever the crosshair is pointing at, [i]Reset to player[/i] goes back to your character. Next to those are [i]Rescan library[/i] and [i]Force sync[/i].
+
+[b]1. Mods / Sections[/b] - every mod that ships tattoos, with the number of entries each one has, filtered by the body area you select at the top. There is a search box and an [i][All mods][/i] entry for when you would rather browse everything at once.
+
+[b]2. Tattoos[/b] - the tattoo list for whatever is selected in panel 1, with its own name search. This column is collapsed by default: it only appears after you pick a mod, and clicking the same entry again closes it and hands its width back to the mod list. Mod names get long, so the list is easier to read when the panel can use the space.
+
+[b]3. Properties & Actions[/b] - the selected tattoo's mod, area and texture, a texture preview, a colour picker with quick swatches, an opacity slider, and the target slot. Slots are shown as [i]first free slot[/i] or a numbered slot, and the picker is clamped to the number of slots the tattoo's own body area has, so you cannot submit a slot number that does not exist. Below that: [i]Apply / update[/i] and [i]Remove[/i].
+
+[b]Slot status[/b] - the occupier of every slot in the selected body area, read straight from SlaveTats' ledger. Empty slots are dimmed, tattoos owned by SlaveTats are green, and slots taken over by some other overlay mod are marked [i][external][/i] in orange, because SlaveTats will skip those. Each occupied slot has an [b]x[/b] to clear that one slot and an [i]edit[/i] button that loads that slot's current colour and opacity into the editor. Then [i]Clear area[/i] and [i]Clear everything[/i].
+
+[b]Presets[/b] - name the current actor's set and save it, then apply it to anyone else. Applying first clears the target by default (there is a checkbox to turn that off), and each tattoo is put back into the slot it came from when that slot is free. Presets are plain JSON, one file each, under [code]Data\SKSE\Plugins\SlaveTatsMenu\Presets\[/code], so they can be edited by hand or handed to someone else. Non-ASCII names work.
+
+[b]Diagnostics[/b] - see the troubleshooting section below.
+
+[b][size=4]What every action tells you[/size][/b]
+The status line at the bottom never guesses. After each operation the plugin reads the ledger back and reports what actually happened:
+
+[list]
+[*][b]OK[/b] (green) - the ledger changed the way you asked, and the overlay was synchronised.
+[*][b]DEFERRED[/b] (yellow) - the ledger is written correctly, but the target's 3D was not loaded when the sync ran, so nothing changed on screen. Re-apply, or press [i]Force sync[/i], once the actor is actually in view.
+[*][b]FAILED[/b] (red) - with the reason.
+[/list]
+
+The entry stays on screen for 15 seconds, and every operation is also written to the log.
+
+[b][size=4]Tattoos survive a reload[/size][/b]
+SlaveTatsNG re-syncs tattoos on load by walking [code].SlaveTatsMenu.known_targets[/code], and that array is normally written by the MCM when you close it. This plugin bypasses the MCM, so it registers every actor you touch in that array itself. Without that, followers would lose their tattoos on the next load.
+
+[b][size=4]Where the catalogue comes from[/size][/b]
+The plugin trusts three sources in order, and tells you in the header which one won:
+
+[list]
+[*]SlaveTatsNG's own [code]query_available_tattoos[/code] - what the game actually knows about right now
+[*][code]Data\slavetats_cache.json[/code] - the same catalogue as SlaveTatsNG dumped it to disk
+[*]a scan of [code]Data\Textures\Actors\Character\slavetats\[/code] - last resort, and entries found here may not be known to the game
+[/list]
+
+SlaveTatsNG only compiles its cache when a save is loaded, so the authoritative source takes over after your first load, not at boot.
+
+[b][size=4]Configuration[/size][/b]
+[code]Data\SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini[/code]
+
+[code][General]
+; Window hotkey, DirectInput scan code. 0x44 = F10
+ToggleKey = 0x44
+; Starting colour and opacity for a tattoo you are about to apply
+DefaultColor = 0x000000
+DefaultAlpha = 1.0
+; UI language: en / zh (the window is fully bilingual)
+Language = en
+
+[UI]
+WindowWidth = 960.0
+WindowHeight = 650.0
+; How often the slot list is re-read, in milliseconds
+SlotRefreshMs = 250
+
+[Debug]
+; Periodic comparison of SlaveTats' ledger against the live overlay nodes
+Probe = 0
+ProbeIntervalMs = 1000
+ProbeArea = Body
+ProbeSlots = 12
+; Logs which module called each data-changing SlaveTatsNG function
+CallTrace = 1[/code]
+
+[b][size=4]Troubleshooting[/size][/b]
+
+[b]Log file:[/b] [code]Documents\My Games\Skyrim Special Edition\SKSE\SlaveTatsMenu.log[/code]. It records the boot handshake, the catalogue source and size, and the result of every operation.
+
+[b]The window does not open.[/b] Check the log for the hotkey line. If the plugin did not load at all, the log will not exist, and that means SKSE did not find the DLL or the runtime version was rejected.
+
+[b]"SlaveTatsNG interface not found"[/b] in red at the top of the window means SlaveTatsNG was not loaded before this plugin. Nothing will work until it is.
+
+[b]A tattoo is applied but nothing shows on the body.[/b] Yellow DEFERRED, or a stale overlay, is usually a target whose 3D is not loaded. Turn on [i]Probe[/i], press [i]Snapshot now[/i], and the log will name the verdict: 3D not loaded, a stuck [code].updated[/code] flag, an empty [code].SlaveTats.version[/code], or an external mod occupying the slot.
+
+[b]Diagnostic probe.[/b] With [i]Probe = 1[/i] (or from the Diagnostics header in the window) the plugin periodically compares both sides of the system - the SlaveTats ledger versus the [code]Body [OvlN][/code] nodes in the 3D scene (RTTI type, alpha, diffuse texture) - and writes only what changed, plus a one-line verdict. It is the tool I used to answer "the tattoo is in the ledger but not on the body".
+
+[b]Call tracer.[/b] [i]CallTrace = 1[/i] is the default. It forwards the seven data-changing functions in SlaveTatsNG's published interface table through a shim that records the calling module and offset first, so the log can answer "which plugin changed this tattoo". Papyrus does not go through that table, so script-side changes will not show up there. It patches the table SlaveTatsNG broadcasts to every plugin, so if another plugin wraps the same table, the two will overwrite each other.
+
+[b][size=4]Known limitations[/size][/b]
+[list]
+[*]The catalogue is limited to what SlaveTatsNG knows about. Tattoos whose JSON sits in a directory the game never indexed will not appear here, even though a raw folder scan would have found them.
+[*]Editing an already-applied tattoo goes through the ledger ([code]color[/code] / [code]invertedAlpha[/code] plus the update flag), because upstream's add call returns early when the tattoo is already present.
+[*]The "edit" button on a slot restores colour and opacity. It does not reconstruct the original texture path if the ledger has lost it.
+[*]The tattoo list column starts collapsed; that is intended, not a missing panel.
+[/list]
+
+[b][size=4]Building from source[/size][/b]
+Visual Studio 2022, CMake 3.22+, vcpkg with the [code]x64-windows-static-md[/code] triplet, and a CommonLibSSE-NG checkout. The tree also builds an offline self-test that exercises the data layer against a real [code]slavetats_cache.json[/code] without the game. Sources are on request; see the permissions below.
+
+[b][size=4]Credits[/size][/b]
+[list]
+[*][b]nopse0[/b] - SlaveTatsNG and its published C++ interface, which is what this plugin is built on
+[*][b]murfk[/b] - the original SlaveTats, and everyone who kept the tattoo packs coming
+[*][b]ryobg[/b] - JContainers
+[*][b]Thiago[/b] - SKSE Menu Framework, without which there would be no window
+[*][b]The SKSE team[/b] - obviously
+[/list]
+
+This plugin redistributes no files from any of them. The interface header it compiles against is used as published by SlaveTatsNG.
+
+[b][size=4]Permissions[/size][/b]
+[list]
+[*]Translation, patches and inclusion in mod packs or lists: fine, as long as this page is credited and linked.
+[*]Reuploading the plugin elsewhere: ask me first.
+[*]If you want the source to build your own version, ask and it is yours.
+[/list]
+
+[b][size=4]Feedback[/size][/b]
+Bug reports are welcome and much easier to act on with two things attached: the SlaveTatsMenu.log from the session, and which panel and button you were on. If a tattoo is in the ledger but not on the body, turn on the probe first and the log will usually name the cause by itself.
