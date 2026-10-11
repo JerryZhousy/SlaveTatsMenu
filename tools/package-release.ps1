@@ -15,11 +15,11 @@
 
     Usage:
         .\tools\package-release.ps1
-        .\tools\package-release.ps1 -Version 2.0.1 -OutDir D:\releases
+        .\tools\package-release.ps1 -OutDir D:\releases
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '2.0.0',
+    [string]$ArchiveName = 'SlaveTatsMenu.zip',
     [string]$OutDir = (Join-Path $PSScriptRoot '..\dist')
 )
 
@@ -83,7 +83,7 @@ foreach ($file in $payload) {
 }
 
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-$archive = Join-Path $outDir "SlaveTatsMenu-$Version.zip"
+$archive = Join-Path $outDir $ArchiveName
 if (Test-Path $archive) { Remove-Item $archive -Force }
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal
 
