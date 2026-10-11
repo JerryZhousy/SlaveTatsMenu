@@ -853,6 +853,22 @@ namespace stm::ui
             return;
         }
 
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            const bool hasPopup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+            const bool isTyping = ImGui::GetIO() && ImGui::GetIO()->WantTextInput;
+
+            if (hasPopup) {
+                // Handled by ImGui to close the popup/combo first.
+            } else if (isTyping) {
+                // Defocus active text input so subsequent ESC closes the window.
+                ImGui::ClearActiveID();
+                ImGui::SetWindowFocus();
+            } else {
+                g_window->IsOpen = false;
+                return;
+            }
+        }
+
         if (auto* viewport = ImGui::GetMainViewport()) {
             const ImVec2 center(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f);
             ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
@@ -860,15 +876,14 @@ namespace stm::ui
 
         ImGui::SetNextWindowSize(ImVec2(Config::Get().windowWidth, Config::Get().windowHeight), ImGuiCond_FirstUseEver);
 
-        if (ImGui::Begin(L("SlaveTats 纹身管理器##stm_window", "SlaveTats Manager##stm_window"), nullptr, ImGuiWindowFlags_NoCollapse)) {
+        bool open = true;
+        if (ImGui::Begin(L("SlaveTats 纹身管理器##stm_window", "SlaveTats Manager##stm_window"), &open, ImGuiWindowFlags_NoCollapse)) {
             DrawMain();
-            ImGui::Spacing();
-            ImGui::Separator();
-            const char* closeLabel = L("关闭窗口##close", "Close window##close");
-            if (ImGui::Button(closeLabel, ButtonSize(closeLabel, 180.0f, 34.0f))) {
-                g_window->IsOpen = false;
-            }
         }
         ImGui::End();
+
+        if (!open) {
+            g_window->IsOpen = false;
+        }
     }
 }
