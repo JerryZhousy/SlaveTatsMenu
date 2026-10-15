@@ -251,6 +251,7 @@ namespace stm::ops
             const bool wasPresent = before >= 0;
 
             ng::SimpleRemoveTattoo(actor, a_section, a_name, true);
+            ng::Synchronize(actor);
 
             const bool stillPresent = FindAppliedSlot(actor, a_section, a_name, nullptr) >= 0;
             data::SlotSnapshot::Get().Invalidate();
@@ -287,17 +288,20 @@ namespace stm::ops
             const auto before = ng::GetAppliedInSlot(actor, a_area, a_slot);
             ng::RemoveFromSlot(actor, a_area, a_slot, true);
             const auto after = ng::GetAppliedInSlot(actor, a_area, a_slot);
-            data::SlotSnapshot::Get().Invalidate();
 
             if (before <= 0) {
+                data::SlotSnapshot::Get().Invalidate();
                 Push(OpResult::Fail("ClearSlot", target, LocaleText("该槽位本来就是空的", "that slot was already empty")));
             } else if (after <= 0) {
+                ng::Synchronize(actor);
+                data::SlotSnapshot::Get().Invalidate();
                 PushOutcome("ClearSlot",
                     target,
                     actor,
                     LocaleText("槽位已清空", "slot cleared"),
                     LocaleText("槽位已清空，但 3D 未加载，同步被推迟", "slot cleared in the ledger, but the 3D is not loaded so the sync was postponed"));
             } else {
+                data::SlotSnapshot::Get().Invalidate();
                 Push(OpResult::Fail("ClearSlot", target, LocaleText("清除后槽位仍被占用", "slot is still occupied")));
             }
         });
