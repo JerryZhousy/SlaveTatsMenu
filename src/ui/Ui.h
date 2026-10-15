@@ -8,8 +8,10 @@ namespace stm::ui
     void Initialize();
 
     void __stdcall RenderMenu();
+    void __stdcall RenderSettings();
     void __stdcall RenderWindow();
 
     void ToggleWindow();
     bool IsWindowOpen();
+    bool IsBindingHotkey();
 }

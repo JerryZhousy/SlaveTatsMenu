@@ -10,6 +10,12 @@ namespace stm
         kEnglish,
     };
 
+    enum class SlotPolicy
+    {
+        kAutoFreeSlot = 0,  // 自动顺延至空槽位
+        kOverwrite = 1      // 覆盖目标槽位
+    };
+
     struct Config
     {
         // [General]
@@ -17,10 +23,15 @@ namespace stm
         float         defaultAlpha = 1.0f;
         std::uint32_t defaultColor = 0x000000;
         Language      language = Language::kEnglish;
+        SlotPolicy    slotPolicy = SlotPolicy::kAutoFreeSlot;
 
         // [UI]
         float windowWidth = 1280.0f;
         float windowHeight = 720.0f;
+        float windowAlpha = 0.95f;   // 0.2 ~ 1.0
+        float fontScale = 1.0f;     // 0.75 ~ 1.5
+        bool  showPreview = true;   // 是否显示图案预览
+        float previewSize = 96.0f;  // 预览图边长
         int   slotRefreshMs = 250;  // how often the applied-slot snapshot is rebuilt
 
         // [Debug]

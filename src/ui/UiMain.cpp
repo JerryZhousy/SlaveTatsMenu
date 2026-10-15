@@ -14,6 +14,8 @@
 #include "ops/TattooOps.h"
 #include "ui/UiState.h"
 
+#include <shellapi.h>
+
 namespace stm::ui
 {
     namespace
@@ -26,6 +28,23 @@ namespace stm::ui
         {
             return Config::Get().IsChinese() ? a_zh : a_en;
         }
+
+        struct FontScaleScope
+        {
+            float scale;
+            explicit FontScaleScope(float s) : scale(s)
+            {
+                if (scale > 0.01f && std::abs(scale - 1.0f) > 0.001f) {
+                    ImGui::SetWindowFontScale(scale);
+                }
+            }
+            ~FontScaleScope()
+            {
+                if (scale > 0.01f && std::abs(scale - 1.0f) > 0.001f) {
+                    ImGui::SetWindowFontScale(1.0f);
+                }
+            }
+        };
 
         double NowSeconds()
         {
@@ -524,11 +543,12 @@ namespace stm::ui
                     ImGui::TextDisabled("%s: %s", L("贴图", "texture"), state.selected.texture.c_str());
                 }
 
-                if (state.previewTexture) {
+                if (Config::Get().showPreview && state.previewTexture) {
                     ImGui::Spacing();
                     ImGui::Text("%s:", L("图案预览", "preview"));
                     ImGui::SameLine();
-                    ImGui::Image(state.previewTexture, ImVec2(96.0f, 96.0f), ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    const float pSize = Config::Get().previewSize;
+                    ImGui::Image(state.previewTexture, ImVec2(pSize, pSize), ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
                 }
 
                 ImGui::Spacing();
@@ -676,12 +696,20 @@ namespace stm::ui
                 ImGui::PopItemWidth();
 
                 const char* savePresetLabel = L("把当前目标存为预设##preset_save", "Save the current target##preset_save");
-                if (ImGui::Button(savePresetLabel, ButtonSize(savePresetLabel, 240.0f, 28.0f))) {
+                if (ImGui::Button(savePresetLabel, ButtonSize(savePresetLabel, 200.0f, 28.0f))) {
                     if (s_presetName[0] == '\0') {
                         state.SetStatus(false, L("请先输入预设名称", "enter a preset name first"), NowSeconds());
                     } else {
                         ops::CapturePreset(data::TargetState::Get().Handle(), s_presetName);
                     }
+                }
+                ImGui::SameLine();
+                const char* openPresetFolderLabel = L("打开预设目录##open_preset_dir", "Open Folder##open_preset_dir");
+                if (ImGui::Button(openPresetFolderLabel, ButtonSize(openPresetFolderLabel, 0.0f, 28.0f))) {
+                    const auto dir = data::PresetStore::Get().Directory();
+                    std::error_code ec;
+                    std::filesystem::create_directories(dir, ec);
+                    ::ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 }
 
                 ImGui::Checkbox(L("应用前先清空目标##preset_clear", "Clear the target before applying##preset_clear"), &s_clearFirst);
@@ -767,6 +795,8 @@ namespace stm::ui
 
         void DrawMain()
         {
+            FontScaleScope fontScope(Config::Get().fontScale);
+
             // One-off verification that the framework calls us on the game's main
             // thread - every direct engine access below assumes exactly that.
             static const std::uint32_t s_renderThread = ThisThreadId();
@@ -806,7 +836,8 @@ namespace stm::ui
             // it is hidden, the inspector keeps the width it has in the
             // three-column layout and the mod list absorbs the freed space.
             const float available = ImGui::GetContentRegionAvail().x;
-            const float panelHeight = 460.0f;
+            const float availY = ImGui::GetContentRegionAvail().y;
+            const float panelHeight = std::max(380.0f, availY - 35.0f);
 
             float col3 = available - 240.0f - 280.0f - 16.0f;
             if (col3 < 400.0f) {
@@ -940,6 +971,659 @@ namespace stm::ui
             }
         }
 
+        std::uint32_t ImGuiKeyToDirectInput(ImGuiKey a_key)
+        {
+            switch (a_key) {
+            case ImGuiKey_Escape: return 0x01;
+            case ImGuiKey_1: return 0x02;
+            case ImGuiKey_2: return 0x03;
+            case ImGuiKey_3: return 0x04;
+            case ImGuiKey_4: return 0x05;
+            case ImGuiKey_5: return 0x06;
+            case ImGuiKey_6: return 0x07;
+            case ImGuiKey_7: return 0x08;
+            case ImGuiKey_8: return 0x09;
+            case ImGuiKey_9: return 0x0A;
+            case ImGuiKey_0: return 0x0B;
+            case ImGuiKey_Minus: return 0x0C;
+            case ImGuiKey_Equal: return 0x0D;
+            case ImGuiKey_Backspace: return 0x0E;
+            case ImGuiKey_Tab: return 0x0F;
+            case ImGuiKey_Q: return 0x10;
+            case ImGuiKey_W: return 0x11;
+            case ImGuiKey_E: return 0x12;
+            case ImGuiKey_R: return 0x13;
+            case ImGuiKey_T: return 0x14;
+            case ImGuiKey_Y: return 0x15;
+            case ImGuiKey_U: return 0x16;
+            case ImGuiKey_I: return 0x17;
+            case ImGuiKey_O: return 0x18;
+            case ImGuiKey_P: return 0x19;
+            case ImGuiKey_LeftBracket: return 0x1A;
+            case ImGuiKey_RightBracket: return 0x1B;
+            case ImGuiKey_Enter: return 0x1C;
+            case ImGuiKey_LeftCtrl: return 0x1D;
+            case ImGuiKey_A: return 0x1E;
+            case ImGuiKey_S: return 0x1F;
+            case ImGuiKey_D: return 0x20;
+            case ImGuiKey_F: return 0x21;
+            case ImGuiKey_G: return 0x22;
+            case ImGuiKey_H: return 0x23;
+            case ImGuiKey_J: return 0x24;
+            case ImGuiKey_K: return 0x25;
+            case ImGuiKey_L: return 0x26;
+            case ImGuiKey_Semicolon: return 0x27;
+            case ImGuiKey_Apostrophe: return 0x28;
+            case ImGuiKey_GraveAccent: return 0x29;
+            case ImGuiKey_LeftShift: return 0x2A;
+            case ImGuiKey_Backslash: return 0x2B;
+            case ImGuiKey_Z: return 0x2C;
+            case ImGuiKey_X: return 0x2D;
+            case ImGuiKey_C: return 0x2E;
+            case ImGuiKey_V: return 0x2F;
+            case ImGuiKey_B: return 0x30;
+            case ImGuiKey_N: return 0x31;
+            case ImGuiKey_M: return 0x32;
+            case ImGuiKey_Comma: return 0x33;
+            case ImGuiKey_Period: return 0x34;
+            case ImGuiKey_Slash: return 0x35;
+            case ImGuiKey_RightShift: return 0x36;
+            case ImGuiKey_KeypadMultiply: return 0x37;
+            case ImGuiKey_LeftAlt: return 0x38;
+            case ImGuiKey_Space: return 0x39;
+            case ImGuiKey_CapsLock: return 0x3A;
+            case ImGuiKey_F1: return 0x3B;
+            case ImGuiKey_F2: return 0x3C;
+            case ImGuiKey_F3: return 0x3D;
+            case ImGuiKey_F4: return 0x3E;
+            case ImGuiKey_F5: return 0x3F;
+            case ImGuiKey_F6: return 0x40;
+            case ImGuiKey_F7: return 0x41;
+            case ImGuiKey_F8: return 0x42;
+            case ImGuiKey_F9: return 0x43;
+            case ImGuiKey_F10: return 0x44;
+            case ImGuiKey_NumLock: return 0x45;
+            case ImGuiKey_ScrollLock: return 0x46;
+            case ImGuiKey_Keypad7: return 0x47;
+            case ImGuiKey_Keypad8: return 0x48;
+            case ImGuiKey_Keypad9: return 0x49;
+            case ImGuiKey_KeypadSubtract: return 0x4A;
+            case ImGuiKey_Keypad4: return 0x4B;
+            case ImGuiKey_Keypad5: return 0x4C;
+            case ImGuiKey_Keypad6: return 0x4D;
+            case ImGuiKey_KeypadAdd: return 0x4E;
+            case ImGuiKey_Keypad1: return 0x4F;
+            case ImGuiKey_Keypad2: return 0x50;
+            case ImGuiKey_Keypad3: return 0x51;
+            case ImGuiKey_Keypad0: return 0x52;
+            case ImGuiKey_KeypadDecimal: return 0x53;
+            case ImGuiKey_F11: return 0x57;
+            case ImGuiKey_F12: return 0x58;
+            case ImGuiKey_KeypadEnter: return 0x9C;
+            case ImGuiKey_RightCtrl: return 0x9D;
+            case ImGuiKey_KeypadDivide: return 0xB5;
+            case ImGuiKey_RightAlt: return 0xB8;
+            case ImGuiKey_Home: return 0xC7;
+            case ImGuiKey_UpArrow: return 0xC8;
+            case ImGuiKey_PageUp: return 0xC9;
+            case ImGuiKey_LeftArrow: return 0xCB;
+            case ImGuiKey_RightArrow: return 0xCD;
+            case ImGuiKey_End: return 0xCF;
+            case ImGuiKey_DownArrow: return 0xD0;
+            case ImGuiKey_PageDown: return 0xD1;
+            case ImGuiKey_Insert: return 0xD2;
+            case ImGuiKey_Delete: return 0xD3;
+            default: return 0;
+            }
+        }
+
+        std::string GetDirectInputKeyName(std::uint32_t a_dik)
+        {
+            switch (a_dik) {
+            case 0x01: return "Escape";
+            case 0x02: return "1";
+            case 0x03: return "2";
+            case 0x04: return "3";
+            case 0x05: return "4";
+            case 0x06: return "5";
+            case 0x07: return "6";
+            case 0x08: return "7";
+            case 0x09: return "8";
+            case 0x0A: return "9";
+            case 0x0B: return "0";
+            case 0x0C: return "Minus (-)";
+            case 0x0D: return "Equals (=)";
+            case 0x0E: return "Backspace";
+            case 0x0F: return "Tab";
+            case 0x10: return "Q";
+            case 0x11: return "W";
+            case 0x12: return "E";
+            case 0x13: return "R";
+            case 0x14: return "T";
+            case 0x15: return "Y";
+            case 0x16: return "U";
+            case 0x17: return "I";
+            case 0x18: return "O";
+            case 0x19: return "P";
+            case 0x1A: return "[";
+            case 0x1B: return "]";
+            case 0x1C: return "Enter";
+            case 0x1D: return "Left Ctrl";
+            case 0x1E: return "A";
+            case 0x1F: return "S";
+            case 0x20: return "D";
+            case 0x21: return "F";
+            case 0x22: return "G";
+            case 0x23: return "H";
+            case 0x24: return "J";
+            case 0x25: return "K";
+            case 0x26: return "L";
+            case 0x27: return ";";
+            case 0x28: return "'";
+            case 0x29: return "` (Tilde)";
+            case 0x2A: return "Left Shift";
+            case 0x2B: return "\\";
+            case 0x2C: return "Z";
+            case 0x2D: return "X";
+            case 0x2E: return "C";
+            case 0x2F: return "V";
+            case 0x30: return "B";
+            case 0x31: return "N";
+            case 0x32: return "M";
+            case 0x33: return ",";
+            case 0x34: return ".";
+            case 0x35: return "/";
+            case 0x36: return "Right Shift";
+            case 0x37: return "Num *";
+            case 0x38: return "Left Alt";
+            case 0x39: return "Space";
+            case 0x3A: return "Caps Lock";
+            case 0x3B: return "F1";
+            case 0x3C: return "F2";
+            case 0x3D: return "F3";
+            case 0x3E: return "F4";
+            case 0x3F: return "F5";
+            case 0x40: return "F6";
+            case 0x41: return "F7";
+            case 0x42: return "F8";
+            case 0x43: return "F9";
+            case 0x44: return "F10";
+            case 0x45: return "Num Lock";
+            case 0x46: return "Scroll Lock";
+            case 0x47: return "Num 7";
+            case 0x48: return "Num 8";
+            case 0x49: return "Num 9";
+            case 0x4A: return "Num -";
+            case 0x4B: return "Num 4";
+            case 0x4C: return "Num 5";
+            case 0x4D: return "Num 6";
+            case 0x4E: return "Num +";
+            case 0x4F: return "Num 1";
+            case 0x50: return "Num 2";
+            case 0x51: return "Num 3";
+            case 0x52: return "Num 0";
+            case 0x53: return "Num .";
+            case 0x57: return "F11";
+            case 0x58: return "F12";
+            case 0x9C: return "Num Enter";
+            case 0x9D: return "Right Ctrl";
+            case 0xB5: return "Num /";
+            case 0xB8: return "Right Alt";
+            case 0xC7: return "Home";
+            case 0xC8: return "Up Arrow";
+            case 0xC9: return "Page Up";
+            case 0xCB: return "Left Arrow";
+            case 0xCD: return "Right Arrow";
+            case 0xCF: return "End";
+            case 0xD0: return "Down Arrow";
+            case 0xD1: return "Page Down";
+            case 0xD2: return "Insert";
+            case 0xD3: return "Delete";
+            default: {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "Key 0x%02X", a_dik);
+                return buf;
+            }
+            }
+        }
+
+        struct KeyChoice
+        {
+            const char* nameZh;
+            const char* nameEn;
+            std::uint32_t dik;
+        };
+
+        const KeyChoice kPopularKeys[] = {
+            { "F10 (默认)", "F10 (Default)", 0x44 },
+            { "F9", "F9", 0x43 },
+            { "F8", "F8", 0x42 },
+            { "F7", "F7", 0x41 },
+            { "F6", "F6", 0x40 },
+            { "F5", "F5", 0x3F },
+            { "F4", "F4", 0x3E },
+            { "F3", "F3", 0x3D },
+            { "F2", "F2", 0x3C },
+            { "F1", "F1", 0x3B },
+            { "F11", "F11", 0x57 },
+            { "F12", "F12", 0x58 },
+            { "Insert", "Insert", 0xD2 },
+            { "Delete", "Delete", 0xD3 },
+            { "Home", "Home", 0xC7 },
+            { "End", "End", 0xCF },
+            { "Page Up", "Page Up", 0xC9 },
+            { "Page Down", "Page Down", 0xD1 },
+            { "` (波浪号 / Tilde)", "` (Tilde)", 0x29 },
+            { "小键盘 0", "Num 0", 0x52 },
+            { "小键盘 1", "Num 1", 0x4F },
+            { "小键盘 2", "Num 2", 0x50 },
+            { "小键盘 3", "Num 3", 0x51 },
+            { "小键盘 4", "Num 4", 0x4B },
+            { "小键盘 5", "Num 5", 0x4C },
+            { "小键盘 6", "Num 6", 0x4D },
+            { "小键盘 7", "Num 7", 0x47 },
+            { "小键盘 8", "Num 8", 0x48 },
+            { "小键盘 9", "Num 9", 0x49 },
+            { "小键盘 *", "Num *", 0x37 },
+            { "小键盘 -", "Num -", 0x4A },
+            { "小键盘 +", "Num +", 0x4E },
+            { "小键盘 /", "Num /", 0xB5 },
+            { "小键盘 回车", "Num Enter", 0x9C },
+        };
+
+        static bool        s_forceResizeWindow = false;
+        static bool        s_bindingHotkey = false;
+        static bool        s_bindingJustStarted = false;
+        static ImVec2      s_lastFloatingWindowSize{ 1280.0f, 720.0f };
+        static float       s_w = 0.0f;
+        static float       s_h = 0.0f;
+        static std::string s_settingsStatus;
+        static double      s_settingsStatusTime = 0.0;
+
+        void DrawSettings()
+        {
+            FontScaleScope fontScope(Config::Get().fontScale);
+            auto&          config = Config::Get();
+
+            auto SetStatus = [&](const char* a_zh, const char* a_en) {
+                s_settingsStatus = L(a_zh, a_en);
+                s_settingsStatusTime = NowSeconds();
+            };
+
+            ImGui::TextDisabled("%s", L("配置 SlaveTats 菜单的常规选项。所有修改会自动保存至 SlaveTatsMenu.ini。",
+                                       "Configure general options for SlaveTats Menu. Changes are automatically saved to SlaveTatsMenu.ini."));
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // 1. 界面与显示 (Interface & Display)
+            if (ImGui::CollapsingHeader(L("界面与显示", "Interface & Display"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Spacing();
+
+                // 语言
+                ImGui::Text("%s:", L("界面语言", "Interface Language"));
+                ImGui::SameLine();
+                int langChoice = config.IsChinese() ? 0 : 1;
+                bool langChanged = false;
+                if (ImGui::RadioButton(L("简体中文", "Simplified Chinese"), &langChoice, 0)) {
+                    langChanged = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("English", &langChoice, 1)) {
+                    langChanged = true;
+                }
+                if (langChanged) {
+                    config.language = (langChoice == 0) ? Language::kChinese : Language::kEnglish;
+                    config.Save();
+                    SetStatus("语言设置已更新并保存！", "Language updated and saved!");
+                }
+
+                ImGui::Spacing();
+
+                // 文字大小
+                float fScale = config.fontScale;
+                ImGui::PushItemWidth(260.0f);
+                if (ImGui::SliderFloat(L("文字大小缩放##font_scale", "Font Size Scale##font_scale"), &fScale, 0.75f, 1.50f, "%.2f x")) {
+                    config.fontScale = fScale;
+                    config.Save();
+                }
+                ImGui::PopItemWidth();
+                ImGui::SameLine();
+                if (ImGui::Button(L("重置为 1.0x##reset_font", "Reset to 1.0x##reset_font"), ButtonSize(L("重置为 1.0x", "Reset to 1.0x")))) {
+                    config.fontScale = 1.0f;
+                    config.Save();
+                    SetStatus("文字大小已重置为 1.0x！", "Font size reset to 1.0x!");
+                }
+
+                ImGui::Spacing();
+
+                // 窗口背景不透明度
+                float winAlpha = config.windowAlpha;
+                ImGui::PushItemWidth(260.0f);
+                if (ImGui::SliderFloat(L("窗口背景不透明度##win_alpha", "Window Background Opacity##win_alpha"), &winAlpha, 0.20f, 1.0f, "%.2f")) {
+                    config.windowAlpha = winAlpha;
+                    config.Save();
+                }
+                ImGui::PopItemWidth();
+                ImGui::TextDisabled("%s", L("说明: 调低不透明度可使浮动窗口半透明，方便透过窗口观察角色身上的着色效果。",
+                                           "Note: Lower opacity makes the window translucent to see character tattoos directly through it."));
+            }
+
+            ImGui::Spacing();
+
+            // 2. 默认窗口大小设置 (Default Menu Size)
+            if (ImGui::CollapsingHeader(L("默认窗口大小设置", "Window Size Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Spacing();
+
+                if (s_w <= 0.0f) s_w = config.windowWidth;
+                if (s_h <= 0.0f) s_h = config.windowHeight;
+
+                ImGui::Text("%s:", L("快速分辨率预设", "Quick Presets"));
+                ImGui::SameLine();
+
+                struct SizePreset { const char* label; float w; float h; };
+                const SizePreset presets[] = {
+                    { "1024x600", 1024.0f, 600.0f },
+                    { "1280x720", 1280.0f, 720.0f },
+                    { "1440x810", 1440.0f, 810.0f },
+                    { "1600x900", 1600.0f, 900.0f },
+                    { "1920x1080", 1920.0f, 1080.0f }
+                };
+
+                for (int i = 0; i < 5; ++i) {
+                    if (i > 0) ImGui::SameLine();
+                    char pbuf[32];
+                    std::snprintf(pbuf, sizeof(pbuf), "%s##preset_%d", presets[i].label, i);
+                    if (ImGui::Button(pbuf, ButtonSize(presets[i].label))) {
+                        s_w = presets[i].w;
+                        s_h = presets[i].h;
+                        config.windowWidth = s_w;
+                        config.windowHeight = s_h;
+                        config.Save();
+                        s_forceResizeWindow = true;
+                        SetStatus("已应用预设窗口尺寸并保存！", "Preset window size applied and saved!");
+                    }
+                }
+
+                ImGui::Spacing();
+
+                ImGui::PushItemWidth(260.0f);
+                if (ImGui::SliderFloat(L("默认宽度##win_w", "Default Width##win_w"), &s_w, 800.0f, 2560.0f, "%.0f px")) {
+                    config.windowWidth = std::round(s_w);
+                    config.Save();
+                }
+                if (ImGui::SliderFloat(L("默认高度##win_h", "Default Height##win_h"), &s_h, 500.0f, 1440.0f, "%.0f px")) {
+                    config.windowHeight = std::round(s_h);
+                    config.Save();
+                }
+                ImGui::PopItemWidth();
+
+                ImGui::Spacing();
+
+                if (ImGui::Button(L("应用并调整窗口尺寸##apply_sz", "Apply & Resize Window##apply_sz"), ButtonSize(L("应用并调整窗口尺寸", "Apply & Resize Window")))) {
+                    config.windowWidth = std::round(s_w);
+                    config.windowHeight = std::round(s_h);
+                    config.Save();
+                    s_forceResizeWindow = true;
+                    SetStatus("窗口尺寸已应用并保存！", "Window size applied and saved!");
+                }
+
+                if (s_lastFloatingWindowSize.x >= 600.0f && s_lastFloatingWindowSize.y >= 400.0f) {
+                    ImGui::SameLine();
+                    char grabLabel[64];
+                    std::snprintf(grabLabel, sizeof(grabLabel), "%s (%.0fx%.0f)##grab_sz",
+                                  L("抓取当前窗口尺寸", "Grab Current Window Size"),
+                                  s_lastFloatingWindowSize.x, s_lastFloatingWindowSize.y);
+                    if (ImGui::Button(grabLabel, ButtonSize(grabLabel))) {
+                        s_w = std::round(s_lastFloatingWindowSize.x);
+                        s_h = std::round(s_lastFloatingWindowSize.y);
+                        config.windowWidth = s_w;
+                        config.windowHeight = s_h;
+                        config.Save();
+                        SetStatus("已抓取当前窗口尺寸并保存为默认！", "Current window size saved as default!");
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", L("将浮动窗口当前被鼠标拉伸的实际尺寸保存为默认大小",
+                                                 "Save the current floating window size as default"));
+                    }
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button(L("重置默认尺寸 (1280x720)##reset_sz", "Reset to 1280x720##reset_sz"), ButtonSize(L("重置默认尺寸 (1280x720)", "Reset to 1280x720")))) {
+                    s_w = 1280.0f;
+                    s_h = 720.0f;
+                    config.windowWidth = 1280.0f;
+                    config.windowHeight = 720.0f;
+                    config.Save();
+                    s_forceResizeWindow = true;
+                    SetStatus("已重置为默认尺寸 (1280x720)！", "Reset to default size (1280x720)!");
+                }
+
+                ImGui::TextDisabled("%s", L("说明: 首次打开或点击「应用」时生效；在游戏中拖动窗口边框调整大小后，亦可点击「抓取」直接保存为默认。",
+                                           "Note: Takes effect on first open or when clicking 'Apply'; after resizing the window border, click 'Grab' to save it directly."));
+                ImGui::Spacing();
+            }
+
+            ImGui::Spacing();
+
+            // 3. 纹身预览与槽位策略 (Preview & Slot Policy)
+            if (ImGui::CollapsingHeader(L("纹身预览与槽位策略", "Preview & Slot Policy"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Spacing();
+
+                // 槽位冲突策略
+                ImGui::Text("%s:", L("槽位占用冲突策略", "Slot Conflict Policy"));
+                ImGui::SameLine();
+                int policyChoice = (config.slotPolicy == SlotPolicy::kOverwrite) ? 1 : 0;
+                bool policyChanged = false;
+                if (ImGui::RadioButton(L("自动顺延至空槽位##slot_autofree", "Auto Allocate to First Free Slot##slot_autofree"), &policyChoice, 0)) {
+                    policyChanged = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton(L("直接覆盖所选槽位##slot_overwrite", "Overwrite Selected Slot##slot_overwrite"), &policyChoice, 1)) {
+                    policyChanged = true;
+                }
+                if (policyChanged) {
+                    config.slotPolicy = (policyChoice == 1) ? SlotPolicy::kOverwrite : SlotPolicy::kAutoFreeSlot;
+                    config.Save();
+                    SetStatus("槽位冲突策略已更新！", "Slot policy updated!");
+                }
+                ImGui::TextDisabled("%s", L("说明: 当手动指定的目标槽位已被占用时，选择自动顺延寻找空槽位，还是直接替换该槽位的现有纹身。",
+                                           "Note: Choose whether to auto-route to an open slot or replace existing ink when the target slot is occupied."));
+
+                ImGui::Spacing();
+
+                // 图案预览
+                bool showPrev = config.showPreview;
+                if (ImGui::Checkbox(L("显示纹身贴图预览##show_prev", "Show Tattoo Texture Preview##show_prev"), &showPrev)) {
+                    config.showPreview = showPrev;
+                    config.Save();
+                    SetStatus("贴图预览开关已更新！", "Preview toggle updated!");
+                }
+
+                if (config.showPreview) {
+                    ImGui::SameLine();
+                    ImGui::Text("%s:", L("预览尺寸预设", "Preview Sizes"));
+                    const float sizes[] = { 64.0f, 96.0f, 128.0f, 192.0f };
+                    for (int i = 0; i < 4; ++i) {
+                        ImGui::SameLine();
+                        char sbuf[32];
+                        std::snprintf(sbuf, sizeof(sbuf), "%.0fpx##prev_sz_%d", sizes[i], i);
+                        if (ImGui::Button(sbuf)) {
+                            config.previewSize = sizes[i];
+                            config.Save();
+                            SetStatus("预览尺寸已更新！", "Preview size updated!");
+                        }
+                    }
+
+                    ImGui::PushItemWidth(260.0f);
+                    float prevSz = config.previewSize;
+                    if (ImGui::SliderFloat(L("预览图边长##prev_slider", "Preview Dimension##prev_slider"), &prevSz, 64.0f, 256.0f, "%.0f px")) {
+                        config.previewSize = prevSz;
+                        config.Save();
+                    }
+                    ImGui::PopItemWidth();
+                }
+
+                ImGui::Spacing();
+            }
+
+            ImGui::Spacing();
+
+            // 4. 预设管理与实用工具 (Presets & Utilities)
+            if (ImGui::CollapsingHeader(L("预设与文件管理", "Presets & File Management"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Spacing();
+
+                const char* openExplorerLabel = L("在资源管理器中打开预设文件夹##open_presets_dir", "Open Presets Folder in Explorer##open_presets_dir");
+                if (ImGui::Button(openExplorerLabel, ButtonSize(openExplorerLabel, 260.0f, 28.0f))) {
+                    const auto dir = data::PresetStore::Get().Directory();
+                    std::error_code ec;
+                    std::filesystem::create_directories(dir, ec);
+                    ::ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    SetStatus("已在文件资源管理器中打开预设目录！", "Presets folder opened in Explorer!");
+                }
+                ImGui::TextDisabled("%s", L("说明: 直接打开预设 JSON 文件存放目录，方便导入外部预设、复制备份或分享给他人。",
+                                           "Note: Opens the presets directory in Windows Explorer for easy import, backup, and sharing of .json preset sets."));
+
+                ImGui::Spacing();
+            }
+
+            ImGui::Spacing();
+
+            // 5. 快捷键设置 (Hotkey)
+            if (ImGui::CollapsingHeader(L("快捷键设置", "Hotkey Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Spacing();
+                ImGui::Text("%s:", L("独立窗口呼出快捷键", "Floating Window Hotkey"));
+                ImGui::SameLine();
+
+                const auto currentDik = config.toggleKey;
+                const auto keyName = GetDirectInputKeyName(currentDik);
+
+                if (s_bindingHotkey) {
+                    if (s_bindingJustStarted) {
+                        s_bindingJustStarted = false;
+                    } else {
+                        for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
+                            const auto imguiKey = static_cast<ImGuiKey>(k);
+                            if (ImGui::IsKeyPressed(imguiKey, false)) {
+                                if (imguiKey == ImGuiKey_Escape) {
+                                    s_bindingHotkey = false;
+                                    break;
+                                }
+                                const auto dik = ImGuiKeyToDirectInput(imguiKey);
+                                if (dik != 0) {
+                                    config.toggleKey = dik;
+                                    config.Save();
+                                    s_bindingHotkey = false;
+                                    SetStatus("快捷键已更新并保存！", "Hotkey updated and saved!");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.1f, 1.0f));
+                    ImGui::Button(L("等待按键输入... (按 ESC 取消)##bind_btn", "Press any key... (ESC to cancel)##bind_btn"), ButtonSize("", 240.0f));
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine();
+                    if (ImGui::Button(L("取消##bind_cancel", "Cancel##bind_cancel"), ButtonSize(L("取消", "Cancel")))) {
+                        s_bindingHotkey = false;
+                    }
+                } else {
+                    char btnLabel[64];
+                    std::snprintf(btnLabel, sizeof(btnLabel), "%s (0x%02X)##bind_btn", keyName.c_str(), currentDik);
+                    if (ImGui::Button(btnLabel, ButtonSize(btnLabel, 180.0f))) {
+                        s_bindingHotkey = true;
+                        s_bindingJustStarted = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", L("点击以按下键盘录入新按键", "Click to record a new key"));
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Button(L("快速选择##key_quick", "Quick Select##key_quick"), ButtonSize(L("快速选择", "Quick Select")))) {
+                        ImGui::OpenPopup("QuickKeyPopup");
+                    }
+
+                    if (ImGui::BeginPopup("QuickKeyPopup")) {
+                        for (const auto& choice : kPopularKeys) {
+                            const bool isSelected = (config.toggleKey == choice.dik);
+                            if (ImGui::Selectable(L(choice.nameZh, choice.nameEn), isSelected)) {
+                                config.toggleKey = choice.dik;
+                                config.Save();
+                                SetStatus("快捷键已更改并保存！", "Hotkey updated and saved!");
+                            }
+                        }
+                        ImGui::EndPopup();
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Button(L("默认 (F10)##reset_hotkey", "Default (F10)##reset_hotkey"), ButtonSize(L("默认 (F10)", "Default (F10)")))) {
+                        config.toggleKey = 0x44;
+                        config.Save();
+                        SetStatus("快捷键已重置为 F10！", "Hotkey reset to F10!");
+                    }
+                }
+
+                ImGui::TextDisabled("%s", L("说明: 在游戏内随时按下此快捷键可切换呼出/隐藏独立的 SlaveTats 纹身管理器窗口。",
+                                           "Note: Press this hotkey anytime in-game to toggle the standalone SlaveTats Manager window."));
+                ImGui::Spacing();
+            }
+
+            ImGui::Spacing();
+
+            // 6. 其他常规设置 (Other General Settings)
+            if (ImGui::CollapsingHeader(L("其他设置", "Other Settings"))) {
+                ImGui::Spacing();
+
+                float inkColor[3] = {
+                    static_cast<float>((config.defaultColor >> 16) & 0xFF) / 255.0f,
+                    static_cast<float>((config.defaultColor >> 8) & 0xFF) / 255.0f,
+                    static_cast<float>(config.defaultColor & 0xFF) / 255.0f
+                };
+                if (ImGui::ColorEdit3(L("默认纹身墨水颜色##def_col", "Default Tattoo Ink Color##def_col"), inkColor)) {
+                    config.defaultColor = PackColor(inkColor);
+                    config.Save();
+                }
+
+                if (ImGui::SliderFloat(L("默认纹身透明度##def_alpha", "Default Tattoo Opacity##def_alpha"), &config.defaultAlpha, 0.05f, 1.0f, "%.2f")) {
+                    config.Save();
+                }
+
+                if (ImGui::SliderInt(L("已生效槽位刷新间隔 (毫秒)##slot_refresh", "Applied Slots Refresh Interval (ms)##slot_refresh"), &config.slotRefreshMs, 50, 1000, "%d ms")) {
+                    config.Save();
+                }
+
+                ImGui::Spacing();
+                if (ImGui::Button(L("恢复全部默认设置##reset_all", "Restore All Defaults##reset_all"), ButtonSize(L("恢复全部默认设置", "Restore All Defaults")))) {
+                    config.toggleKey = 0x44;
+                    config.language = Language::kChinese;
+                    config.windowWidth = 1280.0f;
+                    config.windowHeight = 720.0f;
+                    config.windowAlpha = 0.95f;
+                    config.fontScale = 1.0f;
+                    config.showPreview = true;
+                    config.previewSize = 96.0f;
+                    config.slotPolicy = SlotPolicy::kAutoFreeSlot;
+                    config.defaultAlpha = 1.0f;
+                    config.defaultColor = 0x000000;
+                    config.slotRefreshMs = 250;
+                    s_w = 1280.0f;
+                    s_h = 720.0f;
+                    config.Save();
+                    s_forceResizeWindow = true;
+                    SetStatus("已恢复全部默认设置并保存！", "All default settings restored and saved!");
+                }
+                ImGui::Spacing();
+            }
+
+            // 状态提示条
+            if (!s_settingsStatus.empty() && (NowSeconds() - s_settingsStatusTime) < 8.0) {
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "[OK] %s", s_settingsStatus.c_str());
+            }
+        }
+
         bool IsTextInputKey(ImGuiKey a_key)
         {
             return (a_key >= ImGuiKey_0 && a_key <= ImGuiKey_9) ||
@@ -948,6 +1632,11 @@ namespace stm::ui
                    (a_key >= ImGuiKey_Apostrophe && a_key <= ImGuiKey_GraveAccent) ||
                    a_key == ImGuiKey_Space;
         }
+    }
+
+    bool IsBindingHotkey()
+    {
+        return s_bindingHotkey;
     }
 
     void ToggleWindow()
@@ -968,6 +1657,7 @@ namespace stm::ui
 
         SKSEMenuFramework::SetSection("SlaveTats");
         SKSEMenuFramework::AddSectionItem(L("纹身管理器", "Tattoo Manager"), RenderMenu);
+        SKSEMenuFramework::AddSectionItem(L("设置", "Settings"), RenderSettings);
         g_window = SKSEMenuFramework::AddWindow(RenderWindow);
 
         if (!g_window) {
@@ -980,6 +1670,11 @@ namespace stm::ui
     void __stdcall RenderMenu()
     {
         DrawMain();
+    }
+
+    void __stdcall RenderSettings()
+    {
+        DrawSettings();
     }
 
     void __stdcall RenderWindow()
@@ -1008,7 +1703,7 @@ namespace stm::ui
         const bool isTyping = ImGui::GetIO() && ImGui::GetIO()->WantTextInput;
 
         // Toggle hotkey closes the window once released and pressed again
-        if (toggleImKey != ImGuiKey_None && toggleImKey != ImGuiKey_Escape &&
+        if (!s_bindingHotkey && toggleImKey != ImGuiKey_None && toggleImKey != ImGuiKey_Escape &&
             s_canCloseWithToggleKey && ImGui::IsKeyPressed(toggleImKey, false)) {
             if (!isTyping || !IsTextInputKey(toggleImKey)) {
                 g_window->IsOpen = false;
@@ -1019,6 +1714,10 @@ namespace stm::ui
         }
 
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            if (s_bindingHotkey) {
+                s_bindingHotkey = false;
+                return;
+            }
             const bool hasPopup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
 
             if (hasPopup) {
@@ -1040,11 +1739,30 @@ namespace stm::ui
             ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
         }
 
-        ImGui::SetNextWindowSize(ImVec2(Config::Get().windowWidth, Config::Get().windowHeight), ImGuiCond_FirstUseEver);
+        if (s_forceResizeWindow) {
+            ImGui::SetNextWindowSize(ImVec2(Config::Get().windowWidth, Config::Get().windowHeight), ImGuiCond_Always);
+            s_forceResizeWindow = false;
+        } else {
+            ImGui::SetNextWindowSize(ImVec2(Config::Get().windowWidth, Config::Get().windowHeight), ImGuiCond_FirstUseEver);
+        }
+
+        ImGui::SetNextWindowBgAlpha(Config::Get().windowAlpha);
 
         bool open = true;
         if (ImGui::Begin(L("SlaveTats 纹身管理器##stm_window", "SlaveTats Manager##stm_window"), &open, ImGuiWindowFlags_NoCollapse)) {
-            DrawMain();
+            FontScaleScope fontScope(Config::Get().fontScale);
+            s_lastFloatingWindowSize = ImGui::GetWindowSize();
+            if (ImGui::BeginTabBar("##stm_tabs")) {
+                if (ImGui::BeginTabItem(L("纹身管理", "Tattoo Manager"))) {
+                    DrawMain();
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem(L("设置", "Settings"))) {
+                    DrawSettings();
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
         }
         ImGui::End();
 

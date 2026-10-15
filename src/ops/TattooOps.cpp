@@ -178,42 +178,56 @@ namespace stm::ops
             }
 
             if (slotInRange && jc::Ready()) {
-                const auto tmpl = jc::AddToPool(jc::CreateMap(), kPool);
-                const auto matches = jc::AddToPool(jc::CreateArray(), kPool);
-
-                jc::MapSetStr(tmpl, "section", section);
-                jc::MapSetStr(tmpl, "name", name);
-
-                if (tmpl && matches && ng::QueryAvailable(tmpl.id, matches.id) == ng::Status::kOk && jc::ArrayCount(matches) > 0) {
-                    const auto first = jc::ArrayGetObj(matches, 0);
-                    std::int32_t added = 0;
-
-                    if (ng::AddAndGetTattoo(actor, first.id, a_request.targetSlot, added) == ng::Status::kOk) {
-                        const jc::ObjId fresh{ added };
-                        jc::MapSetInt(fresh, "color", static_cast<std::int32_t>(a_request.color));
-                        jc::MapSetFlt(fresh, "invertedAlpha", 1.0f - a_request.alpha);
-                        jc::FormDbSetInt(actor, ".SlaveTats.updated", 1);
-                        ng::Synchronize(actor);
-
-                        const auto landed = ng::GetAppliedInSlot(actor, a_request.tattoo.area, a_request.targetSlot);
-                        data::SlotSnapshot::Get().Invalidate();
-
-                        if (landed > 0) {
-                            const std::string target = name + " -> " + a_request.tattoo.area + " #" + std::to_string(a_request.targetSlot);
-                            PushOutcome("Apply",
-                                target,
-                                actor,
-                                LocaleText("已写入指定槽位", "placed into the requested slot"),
-                                LocaleText("账本已写入指定槽位，但 3D 未加载，同步被推迟", "written to the requested slot, but the 3D is not loaded so the sync was postponed"));
-                            return;
-                        }
-
-                        Push(OpResult::Fail("Apply", name, LocaleText("指定槽位写入后回查不到，可能被占用", "slot write did not appear - the slot may be taken")));
-                        return;
+                const auto occupiedHandle = ng::GetAppliedInSlot(actor, a_request.tattoo.area, a_request.targetSlot);
+                bool proceedWithSlot = true;
+                if (occupiedHandle > 0) {
+                    if (Config::Get().slotPolicy == SlotPolicy::kOverwrite) {
+                        SKSE::log::info("Ops: slot {} occupied in {}, removing existing per overwrite policy", a_request.targetSlot, a_request.tattoo.area);
+                        ng::RemoveFromSlot(actor, a_request.tattoo.area, a_request.targetSlot, false);
+                    } else {
+                        SKSE::log::info("Ops: slot {} occupied in {}, falling back to auto allocation per autofree policy", a_request.targetSlot, a_request.tattoo.area);
+                        proceedWithSlot = false;
                     }
                 }
 
-                SKSE::log::warn("Ops: could not resolve tattoo '{}' / '{}' for slot placement, falling back to auto slot", section, name);
+                if (proceedWithSlot) {
+                    const auto tmpl = jc::AddToPool(jc::CreateMap(), kPool);
+                    const auto matches = jc::AddToPool(jc::CreateArray(), kPool);
+
+                    jc::MapSetStr(tmpl, "section", section);
+                    jc::MapSetStr(tmpl, "name", name);
+
+                    if (tmpl && matches && ng::QueryAvailable(tmpl.id, matches.id) == ng::Status::kOk && jc::ArrayCount(matches) > 0) {
+                        const auto first = jc::ArrayGetObj(matches, 0);
+                        std::int32_t added = 0;
+
+                        if (ng::AddAndGetTattoo(actor, first.id, a_request.targetSlot, added) == ng::Status::kOk) {
+                            const jc::ObjId fresh{ added };
+                            jc::MapSetInt(fresh, "color", static_cast<std::int32_t>(a_request.color));
+                            jc::MapSetFlt(fresh, "invertedAlpha", 1.0f - a_request.alpha);
+                            jc::FormDbSetInt(actor, ".SlaveTats.updated", 1);
+                            ng::Synchronize(actor);
+
+                            const auto landed = ng::GetAppliedInSlot(actor, a_request.tattoo.area, a_request.targetSlot);
+                            data::SlotSnapshot::Get().Invalidate();
+
+                            if (landed > 0) {
+                                const std::string target = name + " -> " + a_request.tattoo.area + " #" + std::to_string(a_request.targetSlot);
+                                PushOutcome("Apply",
+                                    target,
+                                    actor,
+                                    LocaleText("已写入指定槽位", "placed into the requested slot"),
+                                    LocaleText("账本已写入指定槽位，但 3D 未加载，同步被推迟", "written to the requested slot, but the 3D is not loaded so the sync was postponed"));
+                                return;
+                            }
+
+                            Push(OpResult::Fail("Apply", name, LocaleText("指定槽位写入后回查不到", "slot write did not appear")));
+                            return;
+                        }
+                    }
+
+                    SKSE::log::warn("Ops: could not resolve tattoo '{}' / '{}' for slot placement, falling back to auto slot", section, name);
+                }
             }
 
             // Auto slot: upstream picks the first free one and synchronises internally

@@ -38,6 +38,10 @@ namespace stm::ui
                     continue;
                 }
 
+                if (IsBindingHotkey()) {
+                    continue;
+                }
+
                 if (auto* ui = RE::UI::GetSingleton(); ui && ui->IsMenuOpen(RE::Console::MENU_NAME)) {
                     continue;
                 }
