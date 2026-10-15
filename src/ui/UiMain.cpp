@@ -12,6 +12,7 @@
 #include "diag/Probe.h"
 #include "ops/PresetOps.h"
 #include "ops/TattooOps.h"
+#include "render/MannequinRenderer.h"
 #include "ui/UiState.h"
 
 #include <shellapi.h>
@@ -545,10 +546,86 @@ namespace stm::ui
 
                 if (Config::Get().showPreview && state.previewTexture) {
                     ImGui::Spacing();
-                    ImGui::Text("%s:", L("图案预览", "preview"));
+
+                    static bool s_view3D = true;
+                    static bool s_autoSpin = false;
+
+                    ImGui::Text("%s:", L("预览模式", "Preview"));
                     ImGui::SameLine();
-                    const float pSize = Config::Get().previewSize;
-                    ImGui::Image(state.previewTexture, ImVec2(pSize, pSize), ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::RadioButton(L("3D 模特##v3d", "3D Mannequin##v3d"), s_view3D)) {
+                        s_view3D = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton(L("2D 贴图##v2d", "2D Texture##v2d"), !s_view3D)) {
+                        s_view3D = false;
+                    }
+
+                    if (s_view3D) {
+                        if (!render::MannequinRenderer::Get().IsInitialized()) {
+                            auto* bsDev = RE::BSGraphics::Renderer::GetDevice();
+                            if (bsDev) {
+                                auto* d3dDev = reinterpret_cast<ID3D11Device*>(bsDev);
+                                ID3D11DeviceContext* ctx = nullptr;
+                                d3dDev->GetImmediateContext(&ctx);
+                                if (ctx) {
+                                    render::MannequinRenderer::Get().Initialize(d3dDev, ctx);
+                                    ctx->Release();
+                                }
+                            }
+                        }
+
+                        if (render::MannequinRenderer::Get().IsInitialized()) {
+                            if (s_autoSpin) {
+                                render::MannequinRenderer::Get().Rotate(0.015f, 0.0f);
+                            }
+
+                            const float pWidth = std::max(180.0f, a_width - 30.0f);
+                            const float pHeight = 220.0f;
+
+                            if (render::MannequinRenderer::Get().GetWidth() != static_cast<std::uint32_t>(pWidth) ||
+                                render::MannequinRenderer::Get().GetHeight() != static_cast<std::uint32_t>(pHeight)) {
+                                render::MannequinRenderer::Get().Resize(static_cast<std::uint32_t>(pWidth), static_cast<std::uint32_t>(pHeight));
+                            }
+
+                            auto* srv = render::MannequinRenderer::Get().RenderFrame(
+                                reinterpret_cast<ID3D11ShaderResourceView*>(state.previewTexture),
+                                state.color,
+                                state.alpha,
+                                false
+                            );
+
+                            if (srv) {
+                                ImGui::Image(reinterpret_cast<ImGuiMCP::ImTextureID>(srv), ImVec2(pWidth, pHeight),
+                                    ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
+
+                                if (ImGui::IsItemHovered()) {
+                                    auto* io = ImGui::GetIO();
+                                    if (io) {
+                                        if (io->MouseWheel != 0.0f) {
+                                            render::MannequinRenderer::Get().Zoom(io->MouseWheel * 0.18f);
+                                        }
+                                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                                            render::MannequinRenderer::Get().Rotate(io->MouseDelta.x * 0.012f, io->MouseDelta.y * 0.012f);
+                                        }
+                                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+                                            render::MannequinRenderer::Get().Pan(-io->MouseDelta.y * 0.005f);
+                                        }
+                                    }
+                                }
+
+                                ImGui::TextDisabled("%s", L("左键拖动旋转 / 滚轮缩放 / 右键拖动视角", "Left-drag to rotate / Wheel to zoom / Right-drag"));
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(L("复位##cam_rst", "Reset##cam_rst"))) {
+                                    render::MannequinRenderer::Get().ResetCamera();
+                                }
+                                ImGui::SameLine();
+                                ImGui::Checkbox(L("自转##cam_spin", "Spin##cam_spin"), &s_autoSpin);
+                            }
+                        }
+                    } else {
+                        const float pSize = Config::Get().previewSize;
+                        ImGui::Image(state.previewTexture, ImVec2(pSize, pSize), ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    }
                 }
 
                 ImGui::Spacing();

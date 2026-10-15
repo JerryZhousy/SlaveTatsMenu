@@ -55,6 +55,8 @@ set(STM_SOURCES
     src/diag/Probe.h
     src/diag/CallTrace.cpp
     src/diag/CallTrace.h
+    src/render/MannequinRenderer.cpp
+    src/render/MannequinRenderer.h
 )
 
 add_library(${PROJECT_NAME} SHARED ${STM_SOURCES})
@@ -66,6 +68,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     CommonLibSSE::CommonLibSSE
+    d3dcompiler
 )
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/PCH.h)
