@@ -169,6 +169,10 @@ namespace stm::ui
             state.alpha = a_entry.defaultAlpha;
 
             UpdatePreview(a_entry.texture);
+
+            if (a_entry.area == "back") {
+                render::MannequinRenderer::Get().SetBackView();
+            }
         }
 
         std::uint32_t PackColor(const float a_color[3])
@@ -599,22 +603,53 @@ namespace stm::ui
                                 ImGui::Image(reinterpret_cast<ImGuiMCP::ImTextureID>(srv), ImVec2(pWidth, pHeight),
                                     ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
 
+                                static bool s_isDraggingLeft = false;
+                                static bool s_isDraggingRight = false;
+
                                 if (ImGui::IsItemHovered()) {
                                     auto* io = ImGui::GetIO();
-                                    if (io) {
-                                        if (io->MouseWheel != 0.0f) {
-                                            render::MannequinRenderer::Get().Zoom(io->MouseWheel * 0.18f);
-                                        }
-                                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                                    if (io && io->MouseWheel != 0.0f) {
+                                        render::MannequinRenderer::Get().Zoom(io->MouseWheel * 0.18f);
+                                    }
+                                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                        s_isDraggingLeft = true;
+                                    }
+                                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                                        s_isDraggingRight = true;
+                                    }
+                                }
+
+                                if (s_isDraggingLeft) {
+                                    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                                        auto* io = ImGui::GetIO();
+                                        if (io) {
                                             render::MannequinRenderer::Get().Rotate(io->MouseDelta.x * 0.012f, io->MouseDelta.y * 0.012f);
                                         }
-                                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+                                    } else {
+                                        s_isDraggingLeft = false;
+                                    }
+                                }
+
+                                if (s_isDraggingRight) {
+                                    if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                                        auto* io = ImGui::GetIO();
+                                        if (io) {
                                             render::MannequinRenderer::Get().Pan(-io->MouseDelta.y * 0.005f);
                                         }
+                                    } else {
+                                        s_isDraggingRight = false;
                                     }
                                 }
 
                                 ImGui::TextDisabled("%s", L("左键拖动旋转 / 滚轮缩放 / 右键拖动视角", "Left-drag to rotate / Wheel to zoom / Right-drag"));
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(L("正面##cam_front", "Front##cam_front"))) {
+                                    render::MannequinRenderer::Get().SetFrontView();
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(L("背面##cam_back", "Back##cam_back"))) {
+                                    render::MannequinRenderer::Get().SetBackView();
+                                }
                                 ImGui::SameLine();
                                 if (ImGui::SmallButton(L("复位##cam_rst", "Reset##cam_rst"))) {
                                     render::MannequinRenderer::Get().ResetCamera();
@@ -633,8 +668,19 @@ namespace stm::ui
                                     render::MannequinRenderer::Get().InitMeshWithSex(1);
                                 }
                                 ImGui::SameLine();
-                                if (ImGui::SmallButton(L("同步主角##sync_player_sex", "Sync Player##sync_player_sex"))) {
+                                if (ImGui::SmallButton(L("同步目标##sync_player_sex", "Sync Target##sync_player_sex"))) {
                                     render::MannequinRenderer::Get().ReloadForPlayerSex();
+                                }
+                                ImGui::SameLine();
+                                int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
+                                if (ImGui::RadioButton(L("全息##mann_holo_q", "Holo##mann_holo_q"), curCol == 0)) {
+                                    Config::Get().mannequinColor = MannequinColor::kTransparent;
+                                    Config::Get().Save();
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::RadioButton(L("肉色##mann_flesh_q", "Flesh##mann_flesh_q"), curCol == 1)) {
+                                    Config::Get().mannequinColor = MannequinColor::kFlesh;
+                                    Config::Get().Save();
                                 }
                             }
                         }

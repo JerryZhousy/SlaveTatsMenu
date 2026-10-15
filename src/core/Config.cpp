@@ -44,7 +44,9 @@ namespace stm
         fontScale = static_cast<float>(ini.GetDoubleValue("UI", "FontScale", 1.0));
         showPreview = ini.GetBoolValue("UI", "ShowPreview", true);
         previewSize = static_cast<float>(ini.GetDoubleValue("UI", "PreviewSize", 96.0));
-        mannequinColor = static_cast<MannequinColor>(ini.GetLongValue("UI", "MannequinColor", 0));
+        long mCol = ini.GetLongValue("UI", "MannequinColor", 0);
+        if (mCol < 0 || mCol > 1) mCol = 0;
+        mannequinColor = static_cast<MannequinColor>(mCol);
         slotRefreshMs = static_cast<int>(ini.GetLongValue("UI", "SlotRefreshMs", 250));
 
         probeEnabled = ini.GetBoolValue("Debug", "Probe", false);

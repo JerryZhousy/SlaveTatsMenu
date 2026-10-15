@@ -70,6 +70,8 @@ namespace stm::render
                 "Data/Meshes/actors/character/character assets/malebody_0.nif",
                 "Data/meshes/actors/character/character assets/malebody_1.nif",
                 "Data/meshes/actors/character/character assets/malebody_0.nif",
+                "meshes/actors/character/character assets/malebody_1.nif",
+                "meshes/actors/character/character assets/malebody_0.nif",
                 "Data/Meshes/actors/character/character assets/femalebody_1.nif",
                 "Data/meshes/actors/character/character assets/femalebody_1.nif"
             };
@@ -79,13 +81,16 @@ namespace stm::render
                 "Data/Meshes/actors/character/character assets/femalebody_0.nif",
                 "Data/meshes/actors/character/character assets/femalebody_1.nif",
                 "Data/meshes/actors/character/character assets/femalebody_0.nif",
+                "meshes/actors/character/character assets/femalebody_1.nif",
+                "meshes/actors/character/character assets/femalebody_0.nif",
                 "Data/Meshes/actors/character/character assets/malebody_1.nif",
                 "Data/meshes/actors/character/character assets/malebody_1.nif"
             };
         }
 
+        std::error_code ec;
         for (const auto& path : candidatePaths) {
-            if (fs::exists(path)) {
+            if (fs::exists(path, ec)) {
                 auto mesh = LoadFromNif(path);
                 if (mesh.success && !mesh.vertices.empty()) {
                     return mesh;
@@ -108,12 +113,12 @@ namespace stm::render
         }
 
         file.seekg(0, std::ios::end);
-        std::size_t fileSize = static_cast<std::size_t>(file.tellg());
-        file.seekg(0, std::ios::beg);
-
-        if (fileSize < sizeof(NifHeaderPrefix)) {
+        auto endPos = file.tellg();
+        if (endPos <= 0 || static_cast<std::size_t>(endPos) < sizeof(NifHeaderPrefix)) {
             return result;
         }
+        std::size_t fileSize = static_cast<std::size_t>(endPos);
+        file.seekg(0, std::ios::beg);
 
         std::vector<std::uint8_t> buffer(fileSize);
         file.read(reinterpret_cast<char*>(buffer.data()), fileSize);
@@ -125,6 +130,7 @@ namespace stm::render
 
         std::size_t pos = sizeof(NifHeaderPrefix);
         const std::uint32_t numBlocks = prefix->numBlocks;
+        const std::uint32_t bsVersion = prefix->bsVersion;
 
         // 跳过 3 个 export/process 字符串
         for (int i = 0; i < 3; ++i) {
@@ -181,11 +187,12 @@ namespace stm::render
             if (curOffset > fileSize) return result;
         }
 
-        // 寻找最优的身体几何体 Block (优先找名字带 Body / Softbody 的，其次找最大的 NiSkinPartition)
+        // 寻找最优的身体几何体 Block (优先找最大的 NiSkinPartition)
         std::int32_t targetPartitionBlock = -1;
         std::size_t largestPartitionSize = 0;
 
         for (std::uint32_t i = 0; i < numBlocks; ++i) {
+            if (blockTypeIndices[i] >= blockTypes.size()) continue;
             const auto& type = blockTypes[blockTypeIndices[i]];
             if (type == "NiSkinPartition") {
                 if (blockSizes[i] > largestPartitionSize) {
@@ -200,7 +207,7 @@ namespace stm::render
             const std::uint8_t* pData = &buffer[blockOffsets[targetPartitionBlock]];
             std::size_t pSize = blockSizes[targetPartitionBlock];
 
-            if (ParseNiSkinPartition(pData, pSize, 0, result.vertices, result.indices)) {
+            if (ParseNiSkinPartition(pData, pSize, bsVersion, result.vertices, result.indices)) {
                 result.success = true;
                 return result;
             }
@@ -208,6 +215,7 @@ namespace stm::render
 
         // 备选路径：未蒙皮的直接 BSTriShape 遍历
         for (std::uint32_t i = 0; i < numBlocks; ++i) {
+            if (blockTypeIndices[i] >= blockTypes.size()) continue;
             const auto& type = blockTypes[blockTypeIndices[i]];
             if (type == "BSTriShape") {
                 const std::uint8_t* bData = &buffer[blockOffsets[i]];
@@ -216,20 +224,26 @@ namespace stm::render
                 if (bSize > 120) {
                     // 读取 BSTriShape 头部
                     std::size_t p = 0;
+                    if (p + 8 > bSize) continue;
                     std::int32_t nameIdx = *reinterpret_cast<const std::int32_t*>(&bData[p]);
                     p += 4;
                     std::uint32_t numExtra = *reinterpret_cast<const std::uint32_t*>(&bData[p]);
-                    p += 4 + 4 * numExtra + 4 + 4 + 12 + 36 + 4 + 4 + 16 + 12; // 跳过常规属性与包围球
+                    p += 4;
+
+                    std::size_t headerRemaining = 4 * numExtra + 92; // 92 字节对应 flags, transform, sphere, properties
+                    if (p + headerRemaining + 16 > bSize) continue;
+                    p += headerRemaining;
+
                     std::uint64_t vDesc = *reinterpret_cast<const std::uint64_t*>(&bData[p]);
                     p += 8;
-                    std::uint32_t numTri = *reinterpret_cast<const std::uint32_t*>(&bData[p]);
-                    p += 4;
+                    std::uint16_t numTri = *reinterpret_cast<const std::uint16_t*>(&bData[p]);
+                    p += 2;
                     std::uint16_t numVert = *reinterpret_cast<const std::uint16_t*>(&bData[p]);
                     p += 2;
                     std::uint32_t dataSz = *reinterpret_cast<const std::uint32_t*>(&bData[p]);
                     p += 4;
 
-                    if (numTri > 0 && numVert > 0) {
+                    if (numTri > 0 && numVert > 0 && p < bSize) {
                         if (nameIdx >= 0 && nameIdx < static_cast<std::int32_t>(strings.size())) {
                             result.shapeName = strings[nameIdx];
                         }
@@ -248,7 +262,7 @@ namespace stm::render
     bool NifMeshExtractor::ParseNiSkinPartition(
         const std::uint8_t* a_data,
         std::size_t a_size,
-        std::uint64_t /*a_vertexDesc*/,
+        std::uint32_t a_bsVersion,
         std::vector<MannequinVertex>& a_outVerts,
         std::vector<std::uint32_t>& a_outIndices)
     {
@@ -296,6 +310,10 @@ namespace stm::render
         float sizeY = std::max(1.0f, maxZ - minZ);
         float scale = 2.0f / sizeY; // 缩放到合适视口高度
 
+        // 判断 UV 偏移：Skyrim SE (vertexStride >= 28) 包含 bitangent/unusedW (4 字节)，UV 在 offset 16
+        // 若较短 (vertexStride < 28) 则 UV 在 offset 12
+        const std::size_t uvOffset = (vertexStride >= 28) ? 16 : 12;
+
         for (std::uint32_t i = 0; i < numVertices; ++i) {
             const auto* v = vPtr + i * vertexStride;
             float nx = *reinterpret_cast<const float*>(v);
@@ -303,8 +321,8 @@ namespace stm::render
             float nz = *reinterpret_cast<const float*>(v + 8);
 
             // 读取半精度 UV (float16)
-            std::uint16_t uRaw = *reinterpret_cast<const std::uint16_t*>(v + 12);
-            std::uint16_t vRaw = *reinterpret_cast<const std::uint16_t*>(v + 14);
+            std::uint16_t uRaw = *reinterpret_cast<const std::uint16_t*>(v + uvOffset);
+            std::uint16_t vRaw = *reinterpret_cast<const std::uint16_t*>(v + uvOffset + 2);
 
             float u = HalfToFloat(uRaw);
             float vCoord = HalfToFloat(vRaw);
@@ -319,15 +337,25 @@ namespace stm::render
             vert.pos.y = (nz - centerY) * scale;
             vert.pos.z = -ny * scale;
 
-            // 法线
-            vert.norm.x = nx;
-            vert.norm.y = 0.2f;
-            vert.norm.z = -ny;
-            float nlen = std::sqrt(vert.norm.x * vert.norm.x + vert.norm.y * vert.norm.y + vert.norm.z * vert.norm.z);
-            if (nlen > 0.001f) {
-                vert.norm.x /= nlen;
-                vert.norm.y /= nlen;
-                vert.norm.z /= nlen;
+            // 解析顶点法线 (ByteVector3 位于 offset 20，若不可用则用向外辐射法线兜底)
+            if (vertexStride >= 24) {
+                float normX = (static_cast<float>(v[20]) / 127.5f) - 1.0f;
+                float normY = (static_cast<float>(v[21]) / 127.5f) - 1.0f;
+                float normZ = (static_cast<float>(v[22]) / 127.5f) - 1.0f;
+                // 老滚 (X, Y, Z) -> 视口 (X, Z, -Y)
+                vert.norm.x = normX;
+                vert.norm.y = normZ;
+                vert.norm.z = -normY;
+                float nlen = std::sqrt(vert.norm.x * vert.norm.x + vert.norm.y * vert.norm.y + vert.norm.z * vert.norm.z);
+                if (nlen > 0.001f) {
+                    vert.norm.x /= nlen;
+                    vert.norm.y /= nlen;
+                    vert.norm.z /= nlen;
+                } else {
+                    vert.norm = { nx, 0.2f, -ny };
+                }
+            } else {
+                vert.norm = { nx, 0.2f, -ny };
             }
 
             vert.uv.x = u;
@@ -357,6 +385,7 @@ namespace stm::render
             uint8_t hasVMap = a_data[triOffset++];
             const uint16_t* vMap = nullptr;
             if (hasVMap) {
+                if (triOffset + partVerts * 2 > a_size) break;
                 vMap = reinterpret_cast<const uint16_t*>(&a_data[triOffset]);
                 triOffset += partVerts * 2;
             }
@@ -370,6 +399,7 @@ namespace stm::render
             if (triOffset >= a_size) break;
             uint8_t hasFaces = a_data[triOffset++];
             if (hasFaces && partStrips == 0) {
+                if (triOffset + partTriangles * 6 > a_size) break;
                 const auto* triList = reinterpret_cast<const uint16_t*>(&a_data[triOffset]);
                 triOffset += partTriangles * 3 * 2;
 
@@ -396,6 +426,15 @@ namespace stm::render
                     triOffset += partVerts * partWeights;
                 }
             }
+
+            // Skyrim SE (bsVersion == 100): 跳过 partition 尾部附加字段
+            // LOD Level (1 byte) + Global VB (1 byte) + Vertex Desc (8 bytes) + Triangles Copy (partTriangles * 6 bytes)
+            if (a_bsVersion == 100) {
+                std::size_t sseFooter = 1 + 1 + 8 + static_cast<std::size_t>(partTriangles) * 6;
+                if (triOffset + sseFooter <= a_size) {
+                    triOffset += sseFooter;
+                }
+            }
         }
 
         return !a_outVerts.empty() && !a_outIndices.empty();
@@ -410,27 +449,41 @@ namespace stm::render
         std::vector<MannequinVertex>& a_outVerts,
         std::vector<std::uint32_t>& a_outIndices)
     {
+        if (a_numVertices == 0 || a_numTriangles == 0) return false;
+
         std::size_t triBytes = a_numTriangles * 3 * sizeof(std::uint16_t);
         if (triBytes > a_size) return false;
 
-        const auto* triList = reinterpret_cast<const std::uint16_t*>(a_data);
-        a_outIndices.clear();
-        a_outIndices.reserve(a_numTriangles * 3);
-        for (std::uint32_t i = 0; i < a_numTriangles * 3; ++i) {
-            a_outIndices.push_back(triList[i]);
+        std::size_t vertexBytesTotal = a_size - triBytes;
+        std::size_t stride = vertexBytesTotal / a_numVertices;
+        if (stride < 16) return false;
+
+        // 计算中心与包围盒
+        float minX = 1e9f, maxX = -1e9f;
+        float minY = 1e9f, maxY = -1e9f;
+        float minZ = 1e9f, maxZ = -1e9f;
+
+        const std::uint8_t* vPtr = a_data;
+        for (std::uint32_t i = 0; i < a_numVertices; ++i) {
+            const auto* v = vPtr + i * stride;
+            float x = *reinterpret_cast<const float*>(v);
+            float y = *reinterpret_cast<const float*>(v + 4);
+            float z = *reinterpret_cast<const float*>(v + 8);
+
+            minX = std::min(minX, x); maxX = std::max(maxX, x);
+            minY = std::min(minY, y); maxY = std::max(maxY, y);
+            minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
         }
 
-        std::size_t vOffset = triBytes;
-        if (vOffset >= a_size) return false;
+        float centerY = (minZ + maxZ) * 0.5f;
+        float sizeY = std::max(1.0f, maxZ - minZ);
+        float scale = 2.0f / sizeY;
 
-        std::size_t remaining = a_size - vOffset;
-        std::size_t stride = remaining / a_numVertices;
-        if (stride < 12) return false;
+        const std::size_t uvOffset = (stride >= 28) ? 16 : 12;
 
         a_outVerts.clear();
         a_outVerts.reserve(a_numVertices);
 
-        const std::uint8_t* vPtr = a_data + vOffset;
         for (std::uint32_t i = 0; i < a_numVertices; ++i) {
             const auto* v = vPtr + i * stride;
             float x = *reinterpret_cast<const float*>(v);
@@ -439,20 +492,44 @@ namespace stm::render
 
             float u = 0.5f;
             float vCoord = 0.5f;
-            if (stride >= 16) {
-                std::uint16_t uRaw = *reinterpret_cast<const std::uint16_t*>(v + 12);
-                std::uint16_t vRaw = *reinterpret_cast<const std::uint16_t*>(v + 14);
+            if (stride >= uvOffset + 4) {
+                std::uint16_t uRaw = *reinterpret_cast<const std::uint16_t*>(v + uvOffset);
+                std::uint16_t vRaw = *reinterpret_cast<const std::uint16_t*>(v + uvOffset + 2);
                 u = HalfToFloat(uRaw);
                 vCoord = HalfToFloat(vRaw);
+                if (std::isnan(u) || std::isinf(u)) u = 0.5f;
+                if (std::isnan(vCoord) || std::isinf(vCoord)) vCoord = 0.5f;
             }
 
             MannequinVertex vert{};
-            vert.pos = { x * 0.02f, z * 0.02f, -y * 0.02f };
+            vert.pos = { x * scale, (z - centerY) * scale, -y * scale };
             vert.norm = { x, 0.1f, -y };
+            if (stride >= 24) {
+                float normX = (static_cast<float>(v[20]) / 127.5f) - 1.0f;
+                float normY = (static_cast<float>(v[21]) / 127.5f) - 1.0f;
+                float normZ = (static_cast<float>(v[22]) / 127.5f) - 1.0f;
+                vert.norm = { normX, normZ, -normY };
+                float nlen = std::sqrt(vert.norm.x * vert.norm.x + vert.norm.y * vert.norm.y + vert.norm.z * vert.norm.z);
+                if (nlen > 0.001f) {
+                    vert.norm.x /= nlen; vert.norm.y /= nlen; vert.norm.z /= nlen;
+                }
+            }
             vert.uv = { u, vCoord };
             a_outVerts.push_back(vert);
         }
 
-        return true;
+        // 三角形位于顶点数据之后
+        std::size_t triOffset = a_numVertices * stride;
+        const auto* triList = reinterpret_cast<const std::uint16_t*>(a_data + triOffset);
+        a_outIndices.clear();
+        a_outIndices.reserve(a_numTriangles * 3);
+        for (std::uint32_t i = 0; i < a_numTriangles * 3; ++i) {
+            uint16_t idx = triList[i];
+            if (idx < a_numVertices) {
+                a_outIndices.push_back(idx);
+            }
+        }
+
+        return !a_outVerts.empty() && !a_outIndices.empty();
     }
 }

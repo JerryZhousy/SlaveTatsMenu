@@ -49,6 +49,8 @@ namespace stm::render
         void Zoom(float a_deltaDistance);
         void Pan(float a_deltaY);
         void ResetCamera();
+        void SetFrontView() { _camera.yaw = 0.0f; _camera.pitch = 0.0f; }
+        void SetBackView()  { _camera.yaw = 3.14159265f; _camera.pitch = 0.0f; }
 
         // 状态读取
         CameraState& GetCamera() { return _camera; }

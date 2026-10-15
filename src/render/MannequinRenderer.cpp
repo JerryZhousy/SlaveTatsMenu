@@ -1,5 +1,6 @@
 #include "render/MannequinRenderer.h"
 #include "render/NifMeshExtractor.h"
+#include "data/TargetState.h"
 #include <d3dcompiler.h>
 #include <cmath>
 #include <numbers>
@@ -130,13 +131,14 @@ namespace stm::render
 
                 for (int j = 0; j <= slices; ++j) {
                     float u = static_cast<float>(j) / static_cast<float>(slices);
-                    float theta = u * 2.0f * 3.14159265f;
+                    // 对齐老滚标准人体 UV：u = 0.5 为正面中央（前胸/腹部），u = 0 与 u = 1 为后背脊椎
+                    float theta = (u - 0.5f) * 2.0f * 3.14159265f;
 
                     // 椭圆截面（前后稍扁，符合人体横截面）
                     float rx = r * 1.15f;
                     float rz = r * 0.85f;
 
-                    // 胸部与背部细化微调
+                    // 胸部与背部细化微调 (theta = 0 为正前方 +Z)
                     if (y > 0.3f && y < 0.7f) {
                         float frontFactor = std::max(0.0f, std::cos(theta));
                         rz += frontFactor * 0.07f; // 前胸凸起
@@ -153,7 +155,7 @@ namespace stm::render
                     float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
                     vert.norm = { n.x / len, n.y / len, n.z / len };
 
-                    // 映射到老滚 Body 标准 UV 空间 (U: 0.15~0.85, V: 0.1~0.9)
+                    // UV 空间：u 对齐老滚水平环绕 (0.5 为前胸)，v 从头到脚对应贴图垂直方向
                     vert.uv = { u, 1.0f - v };
 
                     a_vertices.push_back(vert);
@@ -194,7 +196,9 @@ namespace stm::render
         }
 
         _device = a_device;
+        _device->AddRef();
         _context = a_context;
+        _context->AddRef();
 
         ResetCamera();
 
@@ -227,6 +231,9 @@ namespace stm::render
         if (_shaderResourceView) { _shaderResourceView->Release(); _shaderResourceView = nullptr; }
         if (_renderTargetView) { _renderTargetView->Release(); _renderTargetView = nullptr; }
         if (_renderTargetTexture) { _renderTargetTexture->Release(); _renderTargetTexture = nullptr; }
+
+        if (_context) { _context->Release(); _context = nullptr; }
+        if (_device) { _device->Release(); _device = nullptr; }
 
         _initialized = false;
     }
@@ -301,11 +308,18 @@ namespace stm::render
         } else if (a_sex == 0) {
             targetSex = BodySex::kFemale;
         } else {
-            // 自动判断主角性别
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player && player->GetActorBase()) {
-                if (player->GetActorBase()->GetSex() == RE::SEXES::kMale) {
+            // 自动判断性别：优先使用当前选中目标(NPC或主角)
+            auto* target = data::TargetState::Get().Resolve();
+            if (target && target->GetActorBase()) {
+                if (target->GetActorBase()->GetSex() == RE::SEXES::kMale) {
                     targetSex = BodySex::kMale;
+                }
+            } else {
+                auto* player = RE::PlayerCharacter::GetSingleton();
+                if (player && player->GetActorBase()) {
+                    if (player->GetActorBase()->GetSex() == RE::SEXES::kMale) {
+                        targetSex = BodySex::kMale;
+                    }
                 }
             }
         }
@@ -319,7 +333,12 @@ namespace stm::render
         if (nifMesh.success && !nifMesh.vertices.empty()) {
             vertices = std::move(nifMesh.vertices);
             indices = std::move(nifMesh.indices);
-            _meshSourceInfo = std::string(targetSex == BodySex::kMale ? "Male NIF (" : "Female NIF (") + nifMesh.shapeName + ")";
+            bool isFallback = (targetSex == BodySex::kMale && nifMesh.sourcePath.find("female") != std::string::npos);
+            if (isFallback) {
+                _meshSourceInfo = "NIF (" + nifMesh.shapeName + " [Female fallback])";
+            } else {
+                _meshSourceInfo = std::string(targetSex == BodySex::kMale ? "Male NIF (" : "Female NIF (") + nifMesh.shapeName + ")";
+            }
         } else {
             GenerateMannequinMesh(vertices, indices);
             _meshSourceInfo = std::string(targetSex == BodySex::kMale ? "Male Procedural" : "Female Procedural");
@@ -435,7 +454,8 @@ namespace stm::render
         // 光栅化状态
         D3D11_RASTERIZER_DESC rd{};
         rd.FillMode = D3D11_FILL_SOLID;
-        rd.CullMode = D3D11_CULL_NONE; // 双面渲染以透光
+        rd.CullMode = D3D11_CULL_BACK; // 背面剔除，确保外表面与纹身清晰无内部遮挡
+        rd.FrontCounterClockwise = FALSE;
         rd.DepthClipEnable = TRUE;
         if (FAILED(_device->CreateRasterizerState(&rd, &_rasterState))) return false;
 
@@ -518,7 +538,7 @@ namespace stm::render
     void MannequinRenderer::Pan(float a_deltaY)
     {
         _camera.targetY += a_deltaY;
-        _camera.targetY = std::clamp(_camera.targetY, -0.8f, 0.8f);
+        _camera.targetY = std::clamp(_camera.targetY, -1.0f, 1.0f);
     }
 
     void MannequinRenderer::ResetCamera()
@@ -539,6 +559,10 @@ namespace stm::render
         if (!_initialized || !_context || !_renderTargetView || !_depthStencilView) {
             return nullptr;
         }
+
+        // 解除可能被外部引用的 SRV 绑定以防 D3D 资源冲突
+        ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+        _context->PSSetShaderResources(0, 1, nullSRV);
 
         // 备份原有渲染状态
         ID3D11RenderTargetView* prevRTV = nullptr;
@@ -616,6 +640,8 @@ namespace stm::render
 
         if (a_tattooTexture) {
             _context->PSSetShaderResources(0, 1, &a_tattooTexture);
+        } else {
+            _context->PSSetShaderResources(0, 1, nullSRV);
         }
 
         _context->OMSetDepthStencilState(_depthStencilState, 1);
@@ -625,6 +651,9 @@ namespace stm::render
 
         // 绘制人偶
         _context->DrawIndexed(_indexCount, 0, 0);
+
+        // 绘制完成后解绑纹理，避免后续冲突
+        _context->PSSetShaderResources(0, 1, nullSRV);
 
         // 还原外部状态
         _context->RSSetViewports(1, &prevViewport);

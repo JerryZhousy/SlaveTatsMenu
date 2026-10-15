@@ -35,7 +35,7 @@ namespace stm::render
         static bool ParseNiSkinPartition(
             const std::uint8_t* a_data,
             std::size_t a_size,
-            std::uint64_t a_vertexDesc,
+            std::uint32_t a_bsVersion,
             std::vector<MannequinVertex>& a_outVerts,
             std::vector<std::uint32_t>& a_outIndices
         );
