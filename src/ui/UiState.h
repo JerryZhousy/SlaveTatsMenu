@@ -40,6 +40,7 @@ namespace stm::ui
 
         // pattern preview (owned by SKSEMenuFramework)
         std::string           previewPath;
+        std::string           previewLoadedPath;
         ImGuiMCP::ImTextureID previewTexture = nullptr;
         ImGuiMCP::ImVec2      previewSize{ 0.0f, 0.0f };
 

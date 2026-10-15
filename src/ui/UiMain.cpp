@@ -95,25 +95,40 @@ namespace stm::ui
             }
 
             if (state.previewTexture) {
-                SKSEMenuFramework::DisposeTexture(state.previewPath);
+                if (!state.previewLoadedPath.empty()) {
+                    SKSEMenuFramework::DisposeTexture(state.previewLoadedPath);
+                }
                 state.previewTexture = nullptr;
             }
 
             state.previewPath = a_rawTexture;
+            state.previewLoadedPath.clear();
             if (state.previewPath.empty()) {
                 return;
             }
 
             std::string path = state.previewPath;
             std::replace(path.begin(), path.end(), '\\', '/');
-            if (path.rfind("Textures/", 0) != 0 && path.rfind("textures/", 0) != 0) {
-                path = "Textures/Actors/Character/slavetats/" + path;
+            if (path.rfind("Textures/", 0) != 0 && path.rfind("textures/", 0) != 0 &&
+                path.rfind("Data/Textures/", 0) != 0 && path.rfind("data/textures/", 0) != 0) {
+                path = "Data/Textures/Actors/Character/slavetats/" + path;
+            } else if (path.rfind("Data/", 0) != 0 && path.rfind("data/", 0) != 0) {
+                path = "Data/" + path;
             }
 
+            // Ensure extension is lower-case .dds for SKSEMenuFramework case-sensitive check
+            if (path.size() >= 4) {
+                std::string ext = path.substr(path.size() - 4);
+                if (ext == ".DDS" || ext == ".Dds") {
+                    path.replace(path.size() - 4, 4, ".dds");
+                }
+            }
+
+            state.previewLoadedPath = path;
             state.previewTexture = SKSEMenuFramework::LoadTexture(path, state.previewSize);
             if (!state.previewTexture) {
-                // Not fatal: older framework builds have no LoadTexture export.
-                SKSE::log::warn("UI: preview for '{}' unavailable (missing file or framework has no LoadTexture)", path);
+                // Not fatal: loose file missing, packed in BSA, or framework error.
+                SKSE::log::warn("UI: preview for '{}' unavailable (missing loose file, packed in BSA, or framework error)", path);
             }
         }
 
