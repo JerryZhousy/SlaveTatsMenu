@@ -591,7 +591,8 @@ namespace stm::ui
                                 reinterpret_cast<ID3D11ShaderResourceView*>(state.previewTexture),
                                 state.color,
                                 state.alpha,
-                                false
+                                false,
+                                Config::Get().mannequinColor
                             );
 
                             if (srv) {
@@ -621,7 +622,20 @@ namespace stm::ui
                                 ImGui::SameLine();
                                 ImGui::Checkbox(L("自转##cam_spin", "Spin##cam_spin"), &s_autoSpin);
 
-                                ImGui::TextDisabled("%s: %s", L("身形模型", "Body Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
+                                ImGui::TextDisabled("%s: %s", L("身形", "Body"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
+                                ImGui::SameLine();
+                                int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
+                                if (ImGui::RadioButton(L("女##mesh_fem", "Female##mesh_fem"), sexChoice == 0)) {
+                                    render::MannequinRenderer::Get().InitMeshWithSex(0);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::RadioButton(L("男##mesh_male", "Male##mesh_male"), sexChoice == 1)) {
+                                    render::MannequinRenderer::Get().InitMeshWithSex(1);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(L("同步主角##sync_player_sex", "Sync Player##sync_player_sex"))) {
+                                    render::MannequinRenderer::Get().ReloadForPlayerSex();
+                                }
                             }
                         }
                     } else {
@@ -1542,6 +1556,28 @@ namespace stm::ui
                     }
                     ImGui::PopItemWidth();
                 }
+
+                ImGui::Spacing();
+
+                // 3D 模特外观材质
+                ImGui::Text("%s:", L("3D 模特外观材质", "3D Mannequin Appearance"));
+                ImGui::SameLine();
+                int colorChoice = (config.mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
+                bool colorChanged = false;
+                if (ImGui::RadioButton(L("透明全息蓝##mann_trans", "Transparent Hologram##mann_trans"), &colorChoice, 0)) {
+                    colorChanged = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton(L("自然肉色##mann_flesh", "Natural Flesh##mann_flesh"), &colorChoice, 1)) {
+                    colorChanged = true;
+                }
+                if (colorChanged) {
+                    config.mannequinColor = (colorChoice == 1) ? MannequinColor::kFlesh : MannequinColor::kTransparent;
+                    config.Save();
+                    SetStatus("3D 模特外观设置已更新并保存！", "3D mannequin appearance updated and saved!");
+                }
+                ImGui::TextDisabled("%s", L("说明: 切换 3D 预览视口中的人体质感，可选择透明全息透光蓝或自然肉色肤质。",
+                                           "Note: Switch 3D preview model appearance between translucent hologram and natural flesh tone."));
 
                 ImGui::Spacing();
             }

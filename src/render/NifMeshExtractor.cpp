@@ -61,14 +61,28 @@ namespace stm::render
         return f;
     }
 
-    ExtractedMesh NifMeshExtractor::LoadDefaultBodyNif()
+    ExtractedMesh NifMeshExtractor::LoadDefaultBodyNif(BodySex a_sex)
     {
-        const std::string candidatePaths[] = {
-            "Data/Meshes/actors/character/character assets/femalebody_1.nif",
-            "Data/Meshes/actors/character/character assets/femalebody_0.nif",
-            "Data/meshes/actors/character/character assets/femalebody_1.nif",
-            "Data/meshes/actors/character/character assets/femalebody_0.nif"
-        };
+        std::vector<std::string> candidatePaths;
+        if (a_sex == BodySex::kMale) {
+            candidatePaths = {
+                "Data/Meshes/actors/character/character assets/malebody_1.nif",
+                "Data/Meshes/actors/character/character assets/malebody_0.nif",
+                "Data/meshes/actors/character/character assets/malebody_1.nif",
+                "Data/meshes/actors/character/character assets/malebody_0.nif",
+                "Data/Meshes/actors/character/character assets/femalebody_1.nif",
+                "Data/meshes/actors/character/character assets/femalebody_1.nif"
+            };
+        } else {
+            candidatePaths = {
+                "Data/Meshes/actors/character/character assets/femalebody_1.nif",
+                "Data/Meshes/actors/character/character assets/femalebody_0.nif",
+                "Data/meshes/actors/character/character assets/femalebody_1.nif",
+                "Data/meshes/actors/character/character assets/femalebody_0.nif",
+                "Data/Meshes/actors/character/character assets/malebody_1.nif",
+                "Data/meshes/actors/character/character assets/malebody_1.nif"
+            };
+        }
 
         for (const auto& path : candidatePaths) {
             if (fs::exists(path)) {

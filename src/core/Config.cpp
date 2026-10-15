@@ -44,6 +44,7 @@ namespace stm
         fontScale = static_cast<float>(ini.GetDoubleValue("UI", "FontScale", 1.0));
         showPreview = ini.GetBoolValue("UI", "ShowPreview", true);
         previewSize = static_cast<float>(ini.GetDoubleValue("UI", "PreviewSize", 96.0));
+        mannequinColor = static_cast<MannequinColor>(ini.GetLongValue("UI", "MannequinColor", 0));
         slotRefreshMs = static_cast<int>(ini.GetLongValue("UI", "SlotRefreshMs", 250));
 
         probeEnabled = ini.GetBoolValue("Debug", "Probe", false);
@@ -86,6 +87,7 @@ namespace stm
         ini.SetDoubleValue("UI", "FontScale", fontScale);
         ini.SetBoolValue("UI", "ShowPreview", showPreview);
         ini.SetDoubleValue("UI", "PreviewSize", previewSize);
+        ini.SetLongValue("UI", "MannequinColor", static_cast<long>(mannequinColor));
         ini.SetLongValue("UI", "SlotRefreshMs", slotRefreshMs);
 
         ini.SetBoolValue("Debug", "Probe", probeEnabled);

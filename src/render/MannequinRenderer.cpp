@@ -53,14 +53,25 @@ namespace stm::render
                 float3 N = normalize(input.WorldNorm);
                 float3 V = normalize(CameraPos.xyz - input.WorldPos);
 
-                // 菲涅尔边缘泛光（Fresnel Rim Light），呈现全息玻璃假人质感
+                // 菲涅尔边缘泛光（Fresnel Rim Light）
                 float NdotV = saturate(abs(dot(N, V)));
                 float fresnel = pow(1.0f - NdotV, 2.2f);
 
                 float3 baseBody = BodyColor.rgb;
-                float3 rimGlow = float3(0.45f, 0.70f, 1.0f) * fresnel * 0.75f;
+                float3 rimGlow;
+                float alpha;
+
+                if (Params.z > 0.5f) {
+                    // 自然肉色皮肤质感 (暖色轻柔高光，保持扎实的人体肤色)
+                    rimGlow = float3(0.95f, 0.88f, 0.80f) * fresnel * 0.35f;
+                    alpha = saturate(BodyColor.a + fresnel * 0.12f);
+                } else {
+                    // 默认透明全息蓝假人
+                    rimGlow = float3(0.45f, 0.70f, 1.0f) * fresnel * 0.75f;
+                    alpha = saturate(BodyColor.a + fresnel * 0.45f);
+                }
+
                 float3 color = baseBody + rimGlow;
-                float alpha = saturate(BodyColor.a + fresnel * 0.45f);
 
                 // 叠加纹身贴图
                 if (Params.x > 0.5f) {
@@ -272,22 +283,50 @@ namespace stm::render
 
     bool MannequinRenderer::InitMesh()
     {
+        return InitMeshWithSex(-1);
+    }
+
+    bool MannequinRenderer::ReloadForPlayerSex()
+    {
+        return InitMeshWithSex(-1);
+    }
+
+    bool MannequinRenderer::InitMeshWithSex(int a_sex)
+    {
+        if (!_device) return false;
+
+        BodySex targetSex = BodySex::kFemale;
+        if (a_sex == 1) {
+            targetSex = BodySex::kMale;
+        } else if (a_sex == 0) {
+            targetSex = BodySex::kFemale;
+        } else {
+            // 自动判断主角性别
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (player && player->GetActorBase()) {
+                if (player->GetActorBase()->GetSex() == RE::SEXES::kMale) {
+                    targetSex = BodySex::kMale;
+                }
+            }
+        }
+
+        _currentSex = (targetSex == BodySex::kMale) ? 1 : 0;
+
         std::vector<MannequinVertex> vertices;
         std::vector<std::uint32_t> indices;
 
-        // 优先尝试从游戏内真实安装的 NIF (femalebody_1.nif) 加载真实身形！
-        auto nifMesh = NifMeshExtractor::LoadDefaultBodyNif();
+        auto nifMesh = NifMeshExtractor::LoadDefaultBodyNif(targetSex);
         if (nifMesh.success && !nifMesh.vertices.empty()) {
             vertices = std::move(nifMesh.vertices);
             indices = std::move(nifMesh.indices);
-            _meshSourceInfo = "NIF (" + nifMesh.shapeName + ")";
+            _meshSourceInfo = std::string(targetSex == BodySex::kMale ? "Male NIF (" : "Female NIF (") + nifMesh.shapeName + ")";
         } else {
-            // 安全回退：使用内置程序化人体网格
             GenerateMannequinMesh(vertices, indices);
-            _meshSourceInfo = "Built-in Procedural";
+            _meshSourceInfo = std::string(targetSex == BodySex::kMale ? "Male Procedural" : "Female Procedural");
         }
 
-        _indexCount = static_cast<std::uint32_t>(indices.size());
+        ID3D11Buffer* newVB = nullptr;
+        ID3D11Buffer* newIB = nullptr;
 
         D3D11_BUFFER_DESC vbd{};
         vbd.Usage = D3D11_USAGE_IMMUTABLE;
@@ -296,7 +335,7 @@ namespace stm::render
 
         D3D11_SUBRESOURCE_DATA vData{};
         vData.pSysMem = vertices.data();
-        if (FAILED(_device->CreateBuffer(&vbd, &vData, &_vertexBuffer))) return false;
+        if (FAILED(_device->CreateBuffer(&vbd, &vData, &newVB))) return false;
 
         D3D11_BUFFER_DESC ibd{};
         ibd.Usage = D3D11_USAGE_IMMUTABLE;
@@ -305,7 +344,17 @@ namespace stm::render
 
         D3D11_SUBRESOURCE_DATA iData{};
         iData.pSysMem = indices.data();
-        if (FAILED(_device->CreateBuffer(&ibd, &iData, &_indexBuffer))) return false;
+        if (FAILED(_device->CreateBuffer(&ibd, &iData, &newIB))) {
+            newVB->Release();
+            return false;
+        }
+
+        if (_vertexBuffer) _vertexBuffer->Release();
+        if (_indexBuffer) _indexBuffer->Release();
+
+        _vertexBuffer = newVB;
+        _indexBuffer = newIB;
+        _indexCount = static_cast<std::uint32_t>(indices.size());
 
         return true;
     }
@@ -484,7 +533,8 @@ namespace stm::render
         ID3D11ShaderResourceView* a_tattooTexture,
         const float a_tattooColor[3],
         float a_tattooAlpha,
-        bool a_isBackArea)
+        bool a_isBackArea,
+        MannequinColor a_bodyColor)
     {
         if (!_initialized || !_context || !_renderTargetView || !_depthStencilView) {
             return nullptr;
@@ -537,10 +587,15 @@ namespace stm::render
             auto* cb = static_cast<ConstantBufferData*>(mapped.pData);
             cb->worldViewProj = wvp;
             cb->world = worldTrans;
-            cb->bodyColor = DirectX::XMFLOAT4(0.25f, 0.35f, 0.50f, 0.30f); // 优雅的全息透光蓝
+            if (a_bodyColor == MannequinColor::kFlesh) {
+                cb->bodyColor = DirectX::XMFLOAT4(0.82f, 0.68f, 0.58f, 0.90f); // 自然温润肉色
+                cb->params = DirectX::XMFLOAT4(a_tattooTexture != nullptr ? 1.0f : 0.0f, a_isBackArea ? 1.0f : 0.0f, 1.0f, 0.0f);
+            } else {
+                cb->bodyColor = DirectX::XMFLOAT4(0.25f, 0.35f, 0.50f, 0.30f); // 优雅的全息透光蓝
+                cb->params = DirectX::XMFLOAT4(a_tattooTexture != nullptr ? 1.0f : 0.0f, a_isBackArea ? 1.0f : 0.0f, 0.0f, 0.0f);
+            }
             cb->tattooColor = DirectX::XMFLOAT4(a_tattooColor[0], a_tattooColor[1], a_tattooColor[2], a_tattooAlpha);
             cb->cameraPos = DirectX::XMFLOAT4(eyeX, eyeY, eyeZ, 1.0f);
-            cb->params = DirectX::XMFLOAT4(a_tattooTexture != nullptr ? 1.0f : 0.0f, a_isBackArea ? 1.0f : 0.0f, 0.0f, 0.0f);
             _context->Unmap(_constantBuffer, 0);
         }
 

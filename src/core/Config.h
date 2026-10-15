@@ -16,6 +16,12 @@ namespace stm
         kOverwrite = 1      // 覆盖目标槽位
     };
 
+    enum class MannequinColor
+    {
+        kTransparent = 0,  // 默认透明全息
+        kFlesh = 1         // 自然肉色
+    };
+
     struct Config
     {
         // [General]
@@ -32,6 +38,7 @@ namespace stm
         float fontScale = 1.0f;     // 0.75 ~ 1.5
         bool  showPreview = true;   // 是否显示图案预览
         float previewSize = 96.0f;  // 预览图边长
+        MannequinColor mannequinColor = MannequinColor::kTransparent; // 3D模特人体颜色风格
         int   slotRefreshMs = 250;  // how often the applied-slot snapshot is rebuilt
 
         // [Debug]

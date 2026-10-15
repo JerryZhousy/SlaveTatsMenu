@@ -16,14 +16,20 @@ namespace stm::render
         bool                         success = false;
     };
 
+    enum class BodySex
+    {
+        kFemale = 0,
+        kMale = 1
+    };
+
     class NifMeshExtractor
     {
     public:
         // 解析指定 NIF 文件中的身体几何网格 (支持 Skyrim SE / AE 的 BSTriShape 与 NiSkinPartition)
         static ExtractedMesh LoadFromNif(const std::string& a_filePath);
 
-        // 尝试自动寻找并加载游戏中当前生效的女性身体 NIF
-        static ExtractedMesh LoadDefaultBodyNif();
+        // 尝试自动寻找并加载游戏中当前生效的身体 NIF (支持指定性别查找 femalebody / malebody)
+        static ExtractedMesh LoadDefaultBodyNif(BodySex a_sex = BodySex::kFemale);
 
     private:
         static bool ParseNiSkinPartition(

@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "core/Config.h"
 
 namespace stm::render
 {
@@ -39,7 +40,8 @@ namespace stm::render
             ID3D11ShaderResourceView* a_tattooTexture,
             const float a_tattooColor[3],
             float a_tattooAlpha,
-            bool a_isBackArea = false
+            bool a_isBackArea = false,
+            MannequinColor a_bodyColor = MannequinColor::kTransparent
         );
 
         // 交互控制
@@ -54,15 +56,19 @@ namespace stm::render
         std::uint32_t GetWidth() const { return _width; }
         std::uint32_t GetHeight() const { return _height; }
         const std::string& GetMeshSourceInfo() const { return _meshSourceInfo; }
+        int GetCurrentSex() const { return _currentSex; }
 
-        // 支持重载指定的 NIF 网格
+        // 支持重载指定的 NIF 网格与根据主角性别重载
         bool LoadMeshFromNif(const std::string& a_nifPath);
+        bool ReloadForPlayerSex();
+        bool InitMeshWithSex(int a_sex);
 
     private:
         MannequinRenderer() = default;
         ~MannequinRenderer() { Shutdown(); }
 
         std::string _meshSourceInfo = "Procedural";
+        int         _currentSex = 0;
 
         bool InitShaders();
         bool InitMesh();
