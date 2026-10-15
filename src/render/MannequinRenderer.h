@@ -53,10 +53,16 @@ namespace stm::render
         bool IsInitialized() const { return _initialized; }
         std::uint32_t GetWidth() const { return _width; }
         std::uint32_t GetHeight() const { return _height; }
+        const std::string& GetMeshSourceInfo() const { return _meshSourceInfo; }
+
+        // 支持重载指定的 NIF 网格
+        bool LoadMeshFromNif(const std::string& a_nifPath);
 
     private:
         MannequinRenderer() = default;
         ~MannequinRenderer() { Shutdown(); }
+
+        std::string _meshSourceInfo = "Procedural";
 
         bool InitShaders();
         bool InitMesh();

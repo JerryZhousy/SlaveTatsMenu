@@ -57,6 +57,8 @@ set(STM_SOURCES
     src/diag/CallTrace.h
     src/render/MannequinRenderer.cpp
     src/render/MannequinRenderer.h
+    src/render/NifMeshExtractor.cpp
+    src/render/NifMeshExtractor.h
 )
 
 add_library(${PROJECT_NAME} SHARED ${STM_SOURCES})

@@ -1,4 +1,5 @@
 #include "render/MannequinRenderer.h"
+#include "render/NifMeshExtractor.h"
 #include <d3dcompiler.h>
 #include <cmath>
 #include <numbers>
@@ -273,7 +274,18 @@ namespace stm::render
     {
         std::vector<MannequinVertex> vertices;
         std::vector<std::uint32_t> indices;
-        GenerateMannequinMesh(vertices, indices);
+
+        // 优先尝试从游戏内真实安装的 NIF (femalebody_1.nif) 加载真实身形！
+        auto nifMesh = NifMeshExtractor::LoadDefaultBodyNif();
+        if (nifMesh.success && !nifMesh.vertices.empty()) {
+            vertices = std::move(nifMesh.vertices);
+            indices = std::move(nifMesh.indices);
+            _meshSourceInfo = "NIF (" + nifMesh.shapeName + ")";
+        } else {
+            // 安全回退：使用内置程序化人体网格
+            GenerateMannequinMesh(vertices, indices);
+            _meshSourceInfo = "Built-in Procedural";
+        }
 
         _indexCount = static_cast<std::uint32_t>(indices.size());
 
@@ -294,6 +306,50 @@ namespace stm::render
         D3D11_SUBRESOURCE_DATA iData{};
         iData.pSysMem = indices.data();
         if (FAILED(_device->CreateBuffer(&ibd, &iData, &_indexBuffer))) return false;
+
+        return true;
+    }
+
+    bool MannequinRenderer::LoadMeshFromNif(const std::string& a_nifPath)
+    {
+        if (!_device) return false;
+
+        auto nifMesh = NifMeshExtractor::LoadFromNif(a_nifPath);
+        if (!nifMesh.success || nifMesh.vertices.empty()) {
+            return false;
+        }
+
+        ID3D11Buffer* newVB = nullptr;
+        ID3D11Buffer* newIB = nullptr;
+
+        D3D11_BUFFER_DESC vbd{};
+        vbd.Usage = D3D11_USAGE_IMMUTABLE;
+        vbd.ByteWidth = static_cast<UINT>(sizeof(MannequinVertex) * nifMesh.vertices.size());
+        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+        D3D11_SUBRESOURCE_DATA vData{};
+        vData.pSysMem = nifMesh.vertices.data();
+        if (FAILED(_device->CreateBuffer(&vbd, &vData, &newVB))) return false;
+
+        D3D11_BUFFER_DESC ibd{};
+        ibd.Usage = D3D11_USAGE_IMMUTABLE;
+        ibd.ByteWidth = static_cast<UINT>(sizeof(std::uint32_t) * nifMesh.indices.size());
+        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+
+        D3D11_SUBRESOURCE_DATA iData{};
+        iData.pSysMem = nifMesh.indices.data();
+        if (FAILED(_device->CreateBuffer(&ibd, &iData, &newIB))) {
+            newVB->Release();
+            return false;
+        }
+
+        if (_vertexBuffer) _vertexBuffer->Release();
+        if (_indexBuffer) _indexBuffer->Release();
+
+        _vertexBuffer = newVB;
+        _indexBuffer = newIB;
+        _indexCount = static_cast<std::uint32_t>(nifMesh.indices.size());
+        _meshSourceInfo = "NIF (" + nifMesh.shapeName + ")";
 
         return true;
     }

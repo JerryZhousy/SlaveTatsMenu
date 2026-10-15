@@ -620,6 +620,8 @@ namespace stm::ui
                                 }
                                 ImGui::SameLine();
                                 ImGui::Checkbox(L("自转##cam_spin", "Spin##cam_spin"), &s_autoSpin);
+
+                                ImGui::TextDisabled("%s: %s", L("身形模型", "Body Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
                             }
                         }
                     } else {
