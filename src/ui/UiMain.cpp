@@ -625,7 +625,6 @@ namespace stm::ui
                     ImGui::Spacing();
 
                     static bool s_view3D = true;
-                    static bool s_autoSpin = false;
 
                     ImGui::Text("%s:", L("预览模式", "Preview"));
                     ImGui::SameLine();
@@ -639,6 +638,19 @@ namespace stm::ui
                     }
 
                     if (s_view3D) {
+                        ImGui::Text("%s:", L("模型颜色", "Model Color"));
+                        ImGui::SameLine();
+                        int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
+                        if (ImGui::RadioButton(L("透明全息蓝##mann_holo_q", "Transparent Hologram##mann_holo_q"), curCol == 0)) {
+                            Config::Get().mannequinColor = MannequinColor::kTransparent;
+                            Config::Get().Save();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::RadioButton(L("自然肉色##mann_flesh_q", "Natural Flesh##mann_flesh_q"), curCol == 1)) {
+                            Config::Get().mannequinColor = MannequinColor::kFlesh;
+                            Config::Get().Save();
+                        }
+
                         if (!render::MannequinRenderer::Get().IsInitialized() && !render::MannequinRenderer::Get().IsInitFailed()) {
                             auto* bsDev = RE::BSGraphics::Renderer::GetDevice();
                             if (bsDev) {
@@ -659,10 +671,6 @@ namespace stm::ui
                                 render::MannequinRenderer::Get().ClearInitFailed();
                             }
                         } else if (render::MannequinRenderer::Get().IsInitialized()) {
-                            if (s_autoSpin) {
-                                render::MannequinRenderer::Get().Rotate(0.015f, 0.0f);
-                            }
-
                             const float pWidth = std::max(180.0f, a_width - 30.0f);
                             const float pHeight = 220.0f;
 
@@ -721,20 +729,6 @@ namespace stm::ui
                                     }
                                 }
 
-                                if (ImGui::SmallButton(L("正面##cam_front", "Front##cam_front"))) {
-                                    render::MannequinRenderer::Get().SetFrontView();
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton(L("背面##cam_back", "Back##cam_back"))) {
-                                    render::MannequinRenderer::Get().SetBackView();
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton(L("复位##cam_rst", "Reset##cam_rst"))) {
-                                    render::MannequinRenderer::Get().ResetCamera();
-                                }
-                                ImGui::SameLine();
-                                ImGui::Checkbox(L("自转##cam_spin", "Spin##cam_spin"), &s_autoSpin);
-
                                 // 部位不再单独提供开关: 预览部位完全跟随上方「部位」一行,
                                 // 这里只显示当前正在预览哪一部分。
                                 ImGui::TextDisabled("%s: %s%s", L("部位", "Part"),
@@ -757,18 +751,9 @@ namespace stm::ui
                                 if (ImGui::SmallButton(L("同步目标##sync_player_sex", "Sync Target##sync_player_sex"))) {
                                     render::MannequinRenderer::Get().ReloadForPlayerSex();
                                 }
-
-                                ImGui::Text("%s:", L("模型颜色", "Model Color"));
                                 ImGui::SameLine();
-                                int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
-                                if (ImGui::RadioButton(L("透明全息蓝##mann_holo_q", "Transparent Hologram##mann_holo_q"), curCol == 0)) {
-                                    Config::Get().mannequinColor = MannequinColor::kTransparent;
-                                    Config::Get().Save();
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::RadioButton(L("自然肉色##mann_flesh_q", "Natural Flesh##mann_flesh_q"), curCol == 1)) {
-                                    Config::Get().mannequinColor = MannequinColor::kFlesh;
-                                    Config::Get().Save();
+                                if (ImGui::SmallButton(L("复位视角##cam_rst", "Reset Camera##cam_rst"))) {
+                                    render::MannequinRenderer::Get().ResetCamera();
                                 }
                             }
                         }
