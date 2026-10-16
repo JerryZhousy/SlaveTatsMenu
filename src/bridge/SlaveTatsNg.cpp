@@ -3,6 +3,7 @@
 #include "SlaveTatsNG_Interface.h"
 #include "SimpleIni.h"
 
+#include "core/Config.h"
 #include "core/Log.h"
 #include "diag/CallTrace.h"
 
@@ -103,7 +104,9 @@ namespace stm::ng
                 // SKSE hands a sender's message to one listener per plugin, so the
                 // diagnostic tracer cannot listen for this itself - it hooks in
                 // here, as early as the table pointer exists.
-                stm::diag::InstallCallTrace();
+                if (stm::Config::Get().callTraceEnabled) {
+                    stm::diag::InstallCallTrace();
+                }
             } else {
                 SKSE::log::error("SlaveTatsNG: interface version mismatch, refusing to use it");
             }

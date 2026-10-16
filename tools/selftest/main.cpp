@@ -10,6 +10,7 @@
 #include "data/PresetIO.h"
 #include "diag/SegmentDiff.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -127,7 +128,15 @@ int main(int argc, char** argv)
     std::cout << "\n=== filtering ===\n";
     Check(stm::data::FilterTattoos(all, { "Face", "", "" }).size() == byArea["Face"], "area filter matches the per-area tally");
     Check(!stm::data::FilterTattoos(all, { "All", "", "" }).empty(), "All is treated as no filter");
-    Check(stm::data::FilterTattoos(all, { "", "03RBQtattos", "" }).size() > 0, "section filter");
+    if (!all.empty()) {
+        const std::string sampleSection = all.front().section;
+        const std::size_t expectedSectionCount = std::count_if(all.begin(), all.end(), [&](const auto& t) {
+            return t.section == sampleSection;
+        });
+        Check(stm::data::FilterTattoos(all, { "", sampleSection, "" }).size() == expectedSectionCount, "section filter matches sample section tally");
+    } else {
+        Check(stm::data::FilterTattoos(all, { "", "dummy", "" }).empty(), "section filter on empty collection returns empty");
+    }
     Check(stm::data::FilterTattoos(all, { "", "", "rbq" }).size() > 0, "keyword is case insensitive");
     Check(stm::data::FilterTattoos(all, { "", "", "zzzzz-nope" }).empty(), "keyword miss returns nothing");
     Check(stm::data::FilterTattoos(all, { "Face", "", "rbq" }).size() <= stm::data::FilterTattoos(all, { "", "", "rbq" }).size(), "filters combine");
@@ -137,7 +146,7 @@ int main(int argc, char** argv)
     Check(stm::diag::DiffSegments("0=0|1=0", "0=1|1=0") == "0=1", "one changed segment", stm::diag::DiffSegments("0=0|1=0", "0=1|1=0"));
     Check(stm::diag::DiffSegments("0=0|1=0", "0=1|1=1") == "0=1  1=1", "two changes, two-space separated", stm::diag::DiffSegments("0=0|1=0", "0=1|1=1"));
     Check(stm::diag::DiffSegments("", "0=1|1=1") == "0=1  1=1", "first sample reports everything");
-    Check(stm::diag::DiffSegments("0=0|1=0|2=0", "0=0").empty(), "shorter new sample yields nothing");
+    Check(stm::diag::DiffSegments("0=0|1=0|2=0", "0=0") == "1=<none>  2=<none>", "shorter new sample reports removed segments", stm::diag::DiffSegments("0=0|1=0|2=0", "0=0"));
     Check(stm::diag::DiffSegments("0=0", "0=0|1=1") == "1=1", "appended segment is reported");
 
     std::cout << "\n=== sorting ===\n";
@@ -172,6 +181,9 @@ int main(int argc, char** argv)
     Check(stm::data::SanitizePresetName("   ") == "preset", "whitespace only falls back");
     Check(stm::data::SanitizePresetName("灰风的纹身") == "灰风的纹身", "CJK survives intact", stm::data::SanitizePresetName("灰风的纹身"));
     Check(stm::data::SanitizePresetName(std::string(80, 'x')).size() == 48, "length is capped");
+    Check(stm::data::SanitizePresetName("CON") == "_CON", "Windows reserved name CON prefixed with underscore");
+    Check(stm::data::SanitizePresetName("nul") == "_nul", "Windows reserved name nul case-insensitively prefixed");
+    Check(stm::data::SanitizePresetName("COM1") == "_COM1", "Windows reserved name COM1 prefixed");
 
     std::cout << "\n=== preset round trip ===\n";
     {

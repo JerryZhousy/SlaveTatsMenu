@@ -1,6 +1,7 @@
 #include "render/MannequinRenderer.h"
 #include "render/NifMeshExtractor.h"
 #include "data/TargetState.h"
+#include <SKSE/SKSE.h>
 #include <d3dcompiler.h>
 #include <cmath>
 #include <numbers>
@@ -75,12 +76,17 @@ namespace stm::render
                 float bodyAlpha;
 
                 if (Params.z > 0.5f) {
-                    // 自然温润肉色 (Flesh)
-                    float3 diffuseLight = BodyColor.rgb * (totalDiffuse * 0.82f + 0.20f);
-                    float3 specHighlight = float3(1.0f, 0.96f, 0.92f) * spec * 0.30f;
-                    float3 rim = float3(1.0f, 0.88f, 0.80f) * fresnel * 0.40f;
+                    // 自然温润肉色 (Flesh)。刻意压平明暗落差: 原来漫反射在 0.20~1.31 倍之间摆,
+                    // 再叠高光与边缘光, 正面朝光的胸口会被推到近白、背光的大腿掉到 0.20 倍的
+                    // 深棕 —— 看上去就是"透明度不均匀、胸口更实"。现在收到 0.80~1.07 倍,
+                    // 只留很淡的高光与边缘光, 全身读起来是一致的一层壳。
+                    float3 diffuseLight = BodyColor.rgb * (0.80f + 0.20f * totalDiffuse);
+                    float3 specHighlight = float3(1.0f, 0.96f, 0.92f) * spec * 0.08f;
+                    float3 rim = float3(1.0f, 0.88f, 0.80f) * fresnel * 0.15f;
                     bodyColorLit = diffuseLight + specHighlight + rim;
-                    bodyAlpha = saturate(BodyColor.a + fresnel * 0.12f);
+                    // 肉色模式保持全幅恒定透明度。边缘 fresnel 加 alpha 会让正面朝向相机的
+                    // 胸/乳房等部位比四肢更实, 看上去就是"透明度不均匀"。
+                    bodyAlpha = BodyColor.a;
                 } else {
                     // 全息透明蓝 (Hologram)
                     float3 diffuseLight = BodyColor.rgb * (totalDiffuse * 0.65f + 0.35f);
@@ -93,38 +99,30 @@ namespace stm::render
                 float3 color = bodyColorLit;
                 float alpha = bodyAlpha;
 
-                // 叠加纹身贴图
+                // 叠加纹身贴图。单色线稿照旧"贴图色 x 墨水色"(与游戏内一致);
+                // 但贴图自带彩色、墨色又还是默认黑时, 直接呈现贴图原色, 否则整个
+                // 预览里的彩绘/口红/图案都会被乘成一块黑板, 根本看不出图案内容。
                 if (Params.x > 0.5f) {
                     float4 tex = TattooTexture.Sample(SamplerLinear, input.UV);
                     float tatAlpha = tex.a * TattooColor.a;
                     if (tatAlpha > 0.01f) {
-                        float maxC = max(tex.r, max(tex.g, tex.b));
-                        float minC = min(tex.r, min(tex.g, tex.b));
-                        float chroma = maxC - minC;
+                        float3 ink = TattooColor.rgb;
+                        float  inkMax = max(ink.r, max(ink.g, ink.b));
+                        float  texChroma = max(tex.r, max(tex.g, tex.b)) - min(tex.r, min(tex.g, tex.b));
 
-                        float3 tint = TattooColor.rgb;
-                        float tintBrightness = max(tint.r, max(tint.g, tint.b));
+                        float3 tatRgb = (texChroma > 0.08f && inkMax < 0.05f) ? tex.rgb : (tex.rgb * ink);
 
-                        float3 tatRgb;
-                        if (chroma > 0.08f) {
-                            // 贴图自带色彩（如粉色爱心、口红、彩绘、指甲油等）：
-                            // 若用户未主动调色（调色板处于默认纯黑/接近黑时），忠实呈现贴图原本的粉嫩/绚丽色彩！
-                            if (tintBrightness < 0.05f) {
-                                tatRgb = tex.rgb;
-                            } else {
-                                // 若用户自选了调色（如选择红色、金黄色、白色等），进行平滑染色
-                                tatRgb = tex.rgb * tint;
-                            }
-                        } else {
-                            // 单色图腾/灰度线条纹身（传统黑白纹身，通过白底灰度图由调色板决定墨水色）：
-                            tatRgb = tex.rgb * tint;
-                        }
-
-                        // 纹身受人体表面光照调制，贴合 3D 体积起伏
-                        float3 litTat = tatRgb * (totalDiffuse * 0.80f + 0.20f);
+                        // 纹身同样压平光照落差, 否则同一张贴图在胸口发白、在大腿发黑,
+                        // 看起来就像人体的透明度在变
+                        float3 litTat = tatRgb * (0.80f + 0.20f * totalDiffuse);
 
                         color = lerp(color, litTat, tatAlpha);
-                        alpha = max(alpha, tatAlpha * 0.95f);
+
+                        // 肉色模式不抬像素 alpha, 保证全身透明度完全一致;
+                        // 全息模式要让纹身自己撑起不透明度, 否则会被身体看穿。
+                        if (Params.z < 0.5f) {
+                            alpha = max(alpha, tatAlpha * 0.95f);
+                        }
                     }
                 }
 
@@ -280,14 +278,16 @@ namespace stm::render
                     int second = first + slices + 1;
 
                     a_indices.push_back(first);
-                    a_indices.push_back(second);
                     a_indices.push_back(first + 1);
+                    a_indices.push_back(second);
 
                     a_indices.push_back(second);
-                    a_indices.push_back(second + 1);
                     a_indices.push_back(first + 1);
+                    a_indices.push_back(second + 1);
                 }
             }
+
+            NifMeshExtractor::ComputeSmoothNormals(a_vertices, a_indices);
         }
 
         // 生成 3D 手部网格（老滚 Hands UV 规范：左手在 u in [0, 0.5]，右手在 u in [0.5, 1.0]）
@@ -439,6 +439,7 @@ namespace stm::render
             return false;
         }
 
+        _initFailed = false;
         _device = a_device;
         _device->AddRef();
         _context = a_context;
@@ -448,12 +449,34 @@ namespace stm::render
             ResetCamera(static_cast<PreviewPart>(i));
         }
 
-        if (!InitShaders()) return false;
-        if (!InitMesh()) return false;
-        if (!InitBuffers()) return false;
-        if (!Resize(_width, _height)) return false;
+        if (!InitShaders()) {
+            SKSE::log::error("[RENDER] Initialize failed at InitShaders");
+            Shutdown();
+            _initFailed = true;
+            return false;
+        }
+        if (!InitMesh()) {
+            SKSE::log::error("[RENDER] Initialize failed at InitMesh");
+            Shutdown();
+            _initFailed = true;
+            return false;
+        }
+        if (!InitBuffers()) {
+            SKSE::log::error("[RENDER] Initialize failed at InitBuffers");
+            Shutdown();
+            _initFailed = true;
+            return false;
+        }
+        if (!Resize(_width, _height)) {
+            SKSE::log::error("[RENDER] Initialize failed at Resize");
+            Shutdown();
+            _initFailed = true;
+            return false;
+        }
 
         _initialized = true;
+        _initFailed = false;
+        SKSE::log::info("[RENDER] MannequinRenderer initialized successfully ({}x{})", _width, _height);
         return true;
     }
 
@@ -470,7 +493,9 @@ namespace stm::render
 
         if (_samplerState) { _samplerState->Release(); _samplerState = nullptr; }
         if (_rasterState) { _rasterState->Release(); _rasterState = nullptr; }
+        if (_blendStateDepthOnly) { _blendStateDepthOnly->Release(); _blendStateDepthOnly = nullptr; }
         if (_blendState) { _blendState->Release(); _blendState = nullptr; }
+        if (_depthStencilStateTestOnly) { _depthStencilStateTestOnly->Release(); _depthStencilStateTestOnly = nullptr; }
         if (_depthStencilState) { _depthStencilState->Release(); _depthStencilState = nullptr; }
 
         if (_depthStencilView) { _depthStencilView->Release(); _depthStencilView = nullptr; }
@@ -483,6 +508,8 @@ namespace stm::render
         if (_device) { _device->Release(); _device = nullptr; }
 
         _initialized = false;
+        _lastFailedWidth = 0;
+        _lastFailedHeight = 0;
     }
 
     bool MannequinRenderer::InitShaders()
@@ -496,20 +523,41 @@ namespace stm::render
         HRESULT hr = D3DCompile(g_shaderSource, sizeof(g_shaderSource), nullptr, nullptr, nullptr,
             "VS_Main", "vs_5_0", flags, 0, &vsBlob, &errorBlob);
         if (FAILED(hr)) {
-            if (errorBlob) errorBlob->Release();
+            if (errorBlob) {
+                SKSE::log::error("[RENDER] Vertex shader compilation failed: {}", static_cast<const char*>(errorBlob->GetBufferPointer()));
+                errorBlob->Release();
+                errorBlob = nullptr;
+            } else {
+                SKSE::log::error("[RENDER] Vertex shader compilation failed (hr=0x{:X})", static_cast<unsigned long>(hr));
+            }
             return false;
+        }
+        if (errorBlob) {
+            errorBlob->Release();
+            errorBlob = nullptr;
         }
 
         hr = D3DCompile(g_shaderSource, sizeof(g_shaderSource), nullptr, nullptr, nullptr,
             "PS_Main", "ps_5_0", flags, 0, &psBlob, &errorBlob);
         if (FAILED(hr)) {
+            if (errorBlob) {
+                SKSE::log::error("[RENDER] Pixel shader compilation failed: {}", static_cast<const char*>(errorBlob->GetBufferPointer()));
+                errorBlob->Release();
+                errorBlob = nullptr;
+            } else {
+                SKSE::log::error("[RENDER] Pixel shader compilation failed (hr=0x{:X})", static_cast<unsigned long>(hr));
+            }
             vsBlob->Release();
-            if (errorBlob) errorBlob->Release();
             return false;
+        }
+        if (errorBlob) {
+            errorBlob->Release();
+            errorBlob = nullptr;
         }
 
         hr = _device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &_vertexShader);
         if (FAILED(hr)) {
+            SKSE::log::error("[RENDER] CreateVertexShader failed (hr=0x{:X})", static_cast<unsigned long>(hr));
             vsBlob->Release();
             psBlob->Release();
             return false;
@@ -517,6 +565,7 @@ namespace stm::render
 
         hr = _device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &_pixelShader);
         if (FAILED(hr)) {
+            SKSE::log::error("[RENDER] CreatePixelShader failed (hr=0x{:X})", static_cast<unsigned long>(hr));
             vsBlob->Release();
             psBlob->Release();
             return false;
@@ -532,12 +581,18 @@ namespace stm::render
         vsBlob->Release();
         psBlob->Release();
 
-        return SUCCEEDED(hr);
+        if (FAILED(hr)) {
+            SKSE::log::error("[RENDER] CreateInputLayout failed (hr=0x{:X})", static_cast<unsigned long>(hr));
+            return false;
+        }
+
+        SKSE::log::info("[RENDER] Shaders compiled and initialized successfully");
+        return true;
     }
 
     bool MannequinRenderer::InitMesh()
     {
-        return InitMeshWithSex(-1);
+        return InitMeshWithSex(0); // 默认女性
     }
 
     bool MannequinRenderer::ReloadForPlayerSex()
@@ -589,7 +644,8 @@ namespace stm::render
         } else if (a_sex == 0) {
             targetSex = BodySex::kFemale;
         } else {
-            // 自动判断性别：优先使用当前选中目标(NPC或主角)
+            // 自动判断性别：若无法获取有效角色或仍处于主菜单无玩家状态，默认女性
+            targetSex = BodySex::kFemale;
             auto* target = data::TargetState::Get().Resolve();
             if (target && target->GetActorBase()) {
                 if (target->GetActorBase()->GetSex() == RE::SEXES::kMale) {
@@ -597,7 +653,7 @@ namespace stm::render
                 }
             } else {
                 auto* player = RE::PlayerCharacter::GetSingleton();
-                if (player && player->GetActorBase()) {
+                if (player && player->GetActorBase() && player->Is3DLoaded()) {
                     if (player->GetActorBase()->GetSex() == RE::SEXES::kMale) {
                         targetSex = BodySex::kMale;
                     }
@@ -609,6 +665,7 @@ namespace stm::render
         const char* sexLabel = (targetSex == BodySex::kMale) ? "Male" : "Female";
 
         // 为全部 4 个部位分别加载或生成几何体 (Body, Face, Hands, Feet)
+        bool anySuccess = false;
         for (std::size_t i = 0; i < static_cast<std::size_t>(PreviewPart::kCount); ++i) {
             auto part = static_cast<PreviewPart>(i);
             std::vector<MannequinVertex> vertices;
@@ -655,7 +712,15 @@ namespace stm::render
                 _partMeshes[i].indexBuffer = newIB;
                 _partMeshes[i].indexCount = static_cast<std::uint32_t>(indices.size());
                 _partMeshes[i].meshSourceInfo = std::move(sourceInfo);
+                anySuccess = true;
+            } else {
+                SKSE::log::warn("[RENDER] CreateD3DBuffers failed for preview part {}", i);
             }
+        }
+
+        if (!anySuccess) {
+            SKSE::log::error("[RENDER] InitMeshWithSex failed: all mesh buffer creations failed");
+            return false;
         }
 
         return true;
@@ -701,14 +766,20 @@ namespace stm::render
         cbd.ByteWidth = sizeof(ConstantBufferData);
         cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        if (FAILED(_device->CreateBuffer(&cbd, nullptr, &_constantBuffer))) return false;
+        if (FAILED(_device->CreateBuffer(&cbd, nullptr, &_constantBuffer))) {
+            SKSE::log::error("[RENDER] InitBuffers: CreateBuffer for constant buffer failed");
+            return false;
+        }
 
         // 深度测试状态
         D3D11_DEPTH_STENCIL_DESC dsd{};
         dsd.DepthEnable = TRUE;
         dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
         dsd.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-        if (FAILED(_device->CreateDepthStencilState(&dsd, &_depthStencilState))) return false;
+        if (FAILED(_device->CreateDepthStencilState(&dsd, &_depthStencilState))) {
+            SKSE::log::error("[RENDER] InitBuffers: CreateDepthStencilState failed");
+            return false;
+        }
 
         // 混合状态（半透明叠加）
         D3D11_BLEND_DESC bd{};
@@ -720,7 +791,27 @@ namespace stm::render
         bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
         bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
         bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-        if (FAILED(_device->CreateBlendState(&bd, &_blendState))) return false;
+        if (FAILED(_device->CreateBlendState(&bd, &_blendState))) {
+            SKSE::log::error("[RENDER] InitBuffers: CreateBlendState failed");
+            return false;
+        }
+
+        // 深度预通道用的混合状态: 关闭颜色写入, 只让深度生效
+        D3D11_BLEND_DESC bdDepth{};
+        bdDepth.RenderTarget[0].BlendEnable = FALSE;
+        bdDepth.RenderTarget[0].RenderTargetWriteMask = 0;
+        if (FAILED(_device->CreateBlendState(&bdDepth, &_blendStateDepthOnly))) {
+            SKSE::log::error("[RENDER] InitBuffers: CreateBlendState (depth prepass) failed");
+            return false;
+        }
+
+        // 正式绘制用的深度状态: 深度照常测试, 但不写入 —— 每个像素只混合最近的那一层
+        D3D11_DEPTH_STENCIL_DESC dsdTestOnly = dsd;
+        dsdTestOnly.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        if (FAILED(_device->CreateDepthStencilState(&dsdTestOnly, &_depthStencilStateTestOnly))) {
+            SKSE::log::error("[RENDER] InitBuffers: CreateDepthStencilState (test only) failed");
+            return false;
+        }
 
         // 光栅化状态
         D3D11_RASTERIZER_DESC rd{};
@@ -728,7 +819,10 @@ namespace stm::render
         rd.CullMode = D3D11_CULL_NONE; // 双面完整渲染，结合深度缓冲自动遮挡，避免顺逆时针差异导致正面被剔除
         rd.FrontCounterClockwise = FALSE;
         rd.DepthClipEnable = TRUE;
-        if (FAILED(_device->CreateRasterizerState(&rd, &_rasterState))) return false;
+        if (FAILED(_device->CreateRasterizerState(&rd, &_rasterState))) {
+            SKSE::log::error("[RENDER] InitBuffers: CreateRasterizerState failed");
+            return false;
+        }
 
         // 采样器
         D3D11_SAMPLER_DESC sd{};
@@ -739,17 +833,21 @@ namespace stm::render
         sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
         sd.MinLOD = 0;
         sd.MaxLOD = D3D11_FLOAT32_MAX;
-        if (FAILED(_device->CreateSamplerState(&sd, &_samplerState))) return false;
+        if (FAILED(_device->CreateSamplerState(&sd, &_samplerState))) {
+            SKSE::log::error("[RENDER] InitBuffers: CreateSamplerState failed");
+            return false;
+        }
 
+        SKSE::log::info("[RENDER] Pipeline state buffers initialized successfully");
         return true;
     }
 
     bool MannequinRenderer::Resize(std::uint32_t a_width, std::uint32_t a_height)
     {
         if (a_width == 0 || a_height == 0 || !_device) return false;
-
-        _width = a_width;
-        _height = a_height;
+        if (_lastFailedWidth == a_width && _lastFailedHeight == a_height) {
+            return false;
+        }
 
         if (_shaderResourceView) { _shaderResourceView->Release(); _shaderResourceView = nullptr; }
         if (_renderTargetView) { _renderTargetView->Release(); _renderTargetView = nullptr; }
@@ -760,8 +858,8 @@ namespace stm::render
 
         // 创建颜色缓冲
         D3D11_TEXTURE2D_DESC td{};
-        td.Width = _width;
-        td.Height = _height;
+        td.Width = a_width;
+        td.Height = a_height;
         td.MipLevels = 1;
         td.ArraySize = 1;
         td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -769,14 +867,29 @@ namespace stm::render
         td.Usage = D3D11_USAGE_DEFAULT;
         td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 
-        if (FAILED(_device->CreateTexture2D(&td, nullptr, &_renderTargetTexture))) return false;
-        if (FAILED(_device->CreateRenderTargetView(_renderTargetTexture, nullptr, &_renderTargetView))) return false;
-        if (FAILED(_device->CreateShaderResourceView(_renderTargetTexture, nullptr, &_shaderResourceView))) return false;
+        if (FAILED(_device->CreateTexture2D(&td, nullptr, &_renderTargetTexture))) {
+            SKSE::log::error("[RENDER] Resize: CreateTexture2D for color buffer failed");
+            _lastFailedWidth = a_width; _lastFailedHeight = a_height;
+            _width = 0; _height = 0;
+            return false;
+        }
+        if (FAILED(_device->CreateRenderTargetView(_renderTargetTexture, nullptr, &_renderTargetView))) {
+            SKSE::log::error("[RENDER] Resize: CreateRenderTargetView failed");
+            _lastFailedWidth = a_width; _lastFailedHeight = a_height;
+            _width = 0; _height = 0;
+            return false;
+        }
+        if (FAILED(_device->CreateShaderResourceView(_renderTargetTexture, nullptr, &_shaderResourceView))) {
+            SKSE::log::error("[RENDER] Resize: CreateShaderResourceView failed");
+            _lastFailedWidth = a_width; _lastFailedHeight = a_height;
+            _width = 0; _height = 0;
+            return false;
+        }
 
         // 创建深度缓冲
         D3D11_TEXTURE2D_DESC dtd{};
-        dtd.Width = _width;
-        dtd.Height = _height;
+        dtd.Width = a_width;
+        dtd.Height = a_height;
         dtd.MipLevels = 1;
         dtd.ArraySize = 1;
         dtd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -784,9 +897,23 @@ namespace stm::render
         dtd.Usage = D3D11_USAGE_DEFAULT;
         dtd.BindFlags = D3D11_BIND_DEPTH_STENCIL;
 
-        if (FAILED(_device->CreateTexture2D(&dtd, nullptr, &_depthStencilTexture))) return false;
-        if (FAILED(_device->CreateDepthStencilView(_depthStencilTexture, nullptr, &_depthStencilView))) return false;
+        if (FAILED(_device->CreateTexture2D(&dtd, nullptr, &_depthStencilTexture))) {
+            SKSE::log::error("[RENDER] Resize: CreateTexture2D for depth buffer failed");
+            _lastFailedWidth = a_width; _lastFailedHeight = a_height;
+            _width = 0; _height = 0;
+            return false;
+        }
+        if (FAILED(_device->CreateDepthStencilView(_depthStencilTexture, nullptr, &_depthStencilView))) {
+            SKSE::log::error("[RENDER] Resize: CreateDepthStencilView failed");
+            _lastFailedWidth = a_width; _lastFailedHeight = a_height;
+            _width = 0; _height = 0;
+            return false;
+        }
 
+        _lastFailedWidth = 0;
+        _lastFailedHeight = 0;
+        _width = a_width;
+        _height = a_height;
         return true;
     }
 
@@ -916,10 +1043,22 @@ namespace stm::render
             currentIndexCount = _partMeshes[partIdx].indexCount;
         }
 
-        if (!_initialized || !_context || !_renderTargetView || !_depthStencilView ||
+        if (!_initialized || !_device || !_context || !_renderTargetView || !_depthStencilView ||
             !currentVB || !currentIB || currentIndexCount == 0) {
             return nullptr;
         }
+
+        if (_device->GetDeviceRemovedReason() != S_OK) {
+            SKSE::log::warn("[RENDER] Direct3D device was removed/reset (0x{:X}), shutting down renderer",
+                static_cast<std::uint32_t>(_device->GetDeviceRemovedReason()));
+            Shutdown();
+            _initFailed = true;
+            return nullptr;
+        }
+
+        // 备份原有渲染状态与管线绑定，确保对游戏与后续渲染零污染
+        ID3D11ShaderResourceView* prevPSSRV = nullptr;
+        _context->PSGetShaderResources(0, 1, &prevPSSRV);
 
         // 解除可能被外部引用的 SRV 绑定以防 D3D 资源冲突
         ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
@@ -1006,15 +1145,17 @@ namespace stm::render
         DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(45.0f), aspect, 0.1f, 100.0f);
         DirectX::XMMATRIX world = DirectX::XMMatrixIdentity();
 
-        DirectX::XMMATRIX wvp = DirectX::XMMatrixTranspose(world * view * proj);
-        DirectX::XMMATRIX worldTrans = DirectX::XMMatrixTranspose(world);
+        // HLSL 的 cbuffer matrix 默认列主序读取未经转置的 row-major XMMATRIX 字节，正好等价于行向量变换
+        DirectX::XMMATRIX wvp = world * view * proj;
+        DirectX::XMMATRIX worldMat = world;
 
         // 更新常量缓冲区
         D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (SUCCEEDED(_context->Map(_constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        HRESULT hrMap = _context->Map(_constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        if (SUCCEEDED(hrMap)) {
             auto* cb = static_cast<ConstantBufferData*>(mapped.pData);
             cb->worldViewProj = wvp;
-            cb->world = worldTrans;
+            cb->world = worldMat;
             if (a_bodyColor == MannequinColor::kFlesh) {
                 cb->bodyColor = DirectX::XMFLOAT4(0.82f, 0.68f, 0.58f, 0.90f); // 自然温润肉色
                 cb->params = DirectX::XMFLOAT4(a_tattooTexture != nullptr ? 1.0f : 0.0f, a_isBackArea ? 1.0f : 0.0f, 1.0f, 0.0f);
@@ -1025,6 +1166,49 @@ namespace stm::render
             cb->tattooColor = DirectX::XMFLOAT4(a_tattooColor[0], a_tattooColor[1], a_tattooColor[2], a_tattooAlpha);
             cb->cameraPos = DirectX::XMFLOAT4(eyeX, eyeY, eyeZ, 1.0f);
             _context->Unmap(_constantBuffer, 0);
+        } else {
+            SKSE::log::warn("[RENDER] ConstantBuffer Map failed (0x{:X})", static_cast<std::uint32_t>(hrMap));
+            if (hrMap == DXGI_ERROR_DEVICE_REMOVED || hrMap == DXGI_ERROR_DEVICE_RESET ||
+                _device->GetDeviceRemovedReason() != S_OK) {
+                if (numViewports > 0) {
+                    _context->RSSetViewports(numViewports, &prevViewport);
+                } else {
+                    _context->RSSetViewports(0, nullptr);
+                }
+                _context->OMSetRenderTargets(1, &prevRTV, prevDSV);
+                _context->RSSetState(prevRasterState);
+                _context->OMSetBlendState(prevBlendState, prevBlendFactor, prevSampleMask);
+                _context->OMSetDepthStencilState(prevDepthState, prevStencilRef);
+                _context->IASetInputLayout(prevInputLayout);
+                _context->IASetPrimitiveTopology(prevTopology);
+                _context->IASetVertexBuffers(0, 1, &prevVB, &prevStride, &prevOffset);
+                _context->IASetIndexBuffer(prevIB, prevIndexFormat, prevIndexOffset);
+                _context->VSSetShader(prevVS, nullptr, 0);
+                _context->VSSetConstantBuffers(0, 1, &prevVSConstant);
+                _context->PSSetShader(prevPS, nullptr, 0);
+                _context->PSSetConstantBuffers(0, 1, &prevPSConstant);
+                _context->PSSetSamplers(0, 1, &prevSampler);
+                _context->PSSetShaderResources(0, 1, &prevPSSRV);
+
+                if (prevPSSRV) prevPSSRV->Release();
+                if (prevRTV) prevRTV->Release();
+                if (prevDSV) prevDSV->Release();
+                if (prevRasterState) prevRasterState->Release();
+                if (prevBlendState) prevBlendState->Release();
+                if (prevDepthState) prevDepthState->Release();
+                if (prevInputLayout) prevInputLayout->Release();
+                if (prevVS) prevVS->Release();
+                if (prevPS) prevPS->Release();
+                if (prevSampler) prevSampler->Release();
+                if (prevVB) prevVB->Release();
+                if (prevIB) prevIB->Release();
+                if (prevVSConstant) prevVSConstant->Release();
+                if (prevPSConstant) prevPSConstant->Release();
+
+                Shutdown();
+                _initFailed = true;
+                return nullptr;
+            }
         }
 
         // 绑定渲染管线资源
@@ -1048,19 +1232,32 @@ namespace stm::render
             _context->PSSetShaderResources(0, 1, nullSRV);
         }
 
-        _context->OMSetDepthStencilState(_depthStencilState, 1);
         const float blendFactor[4] = { 0.f, 0.f, 0.f, 0.f };
-        _context->OMSetBlendState(_blendState, blendFactor, 0xffffffff);
         _context->RSSetState(_rasterState);
 
-        // 绘制选中的部位人偶网格
+        // 第一遍: 深度预通道。只写深度、不写颜色, 把每个像素上最近的表面先固定下来。
+        // 少了这一遍, 3BA/CBBE 这类乳房网格与躯干重叠的模型会在同一像素混合两次
+        // (1-(1-a)^2), 肉色模式的胸口就会明显比四肢更不透明。
+        _context->PSSetShader(nullptr, nullptr, 0);
+        _context->OMSetDepthStencilState(_depthStencilState, 1);
+        _context->OMSetBlendState(_blendStateDepthOnly, blendFactor, 0xffffffff);
+        _context->DrawIndexed(currentIndexCount, 0, 0);
+
+        // 第二遍: 正式着色。深度只测不写, 每个像素恰好混合一层, 全幅透明度一致。
+        _context->PSSetShader(_pixelShader, nullptr, 0);
+        _context->OMSetDepthStencilState(_depthStencilStateTestOnly, 1);
+        _context->OMSetBlendState(_blendState, blendFactor, 0xffffffff);
         _context->DrawIndexed(currentIndexCount, 0, 0);
 
         // 绘制完成后解绑纹理，避免后续冲突
         _context->PSSetShaderResources(0, 1, nullSRV);
 
         // 还原外部状态
-        _context->RSSetViewports(1, &prevViewport);
+        if (numViewports > 0) {
+            _context->RSSetViewports(numViewports, &prevViewport);
+        } else {
+            _context->RSSetViewports(0, nullptr);
+        }
         _context->OMSetRenderTargets(1, &prevRTV, prevDSV);
         _context->RSSetState(prevRasterState);
         _context->OMSetBlendState(prevBlendState, prevBlendFactor, prevSampleMask);
@@ -1074,8 +1271,10 @@ namespace stm::render
         _context->PSSetShader(prevPS, nullptr, 0);
         _context->PSSetConstantBuffers(0, 1, &prevPSConstant);
         _context->PSSetSamplers(0, 1, &prevSampler);
+        _context->PSSetShaderResources(0, 1, &prevPSSRV);
 
         // 释放临时引用的 COM 对象
+        if (prevPSSRV) prevPSSRV->Release();
         if (prevRTV) prevRTV->Release();
         if (prevDSV) prevDSV->Release();
         if (prevRasterState) prevRasterState->Release();

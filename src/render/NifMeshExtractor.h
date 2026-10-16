@@ -37,7 +37,20 @@ namespace stm::render
             return LoadDefaultPartNif(PreviewPart::kBody, a_sex);
         }
 
+        // 计算平滑法线
+        static void ComputeSmoothNormals(std::vector<MannequinVertex>& a_verts, const std::vector<std::uint32_t>& a_indices);
+
     private:
+        static bool ParseDynamicTriShape(
+            const std::uint8_t* a_shapeData,
+            std::size_t a_shapeSize,
+            const std::uint8_t* a_partitionData,
+            std::size_t a_partitionSize,
+            std::uint32_t a_bsVersion,
+            std::vector<MannequinVertex>& a_outVerts,
+            std::vector<std::uint32_t>& a_outIndices
+        );
+
         static bool ParseNiSkinPartition(
             const std::uint8_t* a_data,
             std::size_t a_size,

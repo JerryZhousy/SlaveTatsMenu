@@ -28,6 +28,20 @@ namespace stm::diag
                 result += newSegment;
             }
         }
+
+        // 若新样本段数少于旧样本，报告在当前样本中消失的段
+        while (std::getline(oldStream, oldSegment, '|')) {
+            if (!result.empty()) {
+                result += "  ";
+            }
+            const auto eqPos = oldSegment.find('=');
+            if (eqPos != std::string::npos) {
+                result += oldSegment.substr(0, eqPos + 1) + "<none>";
+            } else {
+                result += oldSegment + "=<none>";
+            }
+        }
+
         return result;
     }
 }

@@ -86,6 +86,13 @@ namespace stm::render
         CameraState& GetCamera();
         CameraState& GetCamera(PreviewPart a_part);
         bool IsInitialized() const { return _initialized; }
+        bool IsInitFailed() const { return _initFailed; }
+        void ClearInitFailed()
+        {
+            _initFailed = false;
+            _lastFailedWidth = 0;
+            _lastFailedHeight = 0;
+        }
         std::uint32_t GetWidth() const { return _width; }
         std::uint32_t GetHeight() const { return _height; }
         const std::string& GetMeshSourceInfo() const;
@@ -110,8 +117,11 @@ namespace stm::render
         bool InitBuffers();
 
         bool _initialized = false;
+        bool _initFailed = false;
         std::uint32_t _width = 384;
         std::uint32_t _height = 384;
+        std::uint32_t _lastFailedWidth = 0;
+        std::uint32_t _lastFailedHeight = 0;
 
         ID3D11Device*        _device = nullptr;
         ID3D11DeviceContext* _context = nullptr;
@@ -125,9 +135,13 @@ namespace stm::render
         ID3D11Texture2D*         _depthStencilTexture = nullptr;
         ID3D11DepthStencilView*  _depthStencilView = nullptr;
         ID3D11DepthStencilState* _depthStencilState = nullptr;
+        // 深度预通道之后正式绘制用: 深度只测试、不写入, 保证每个像素只混合一层
+        ID3D11DepthStencilState* _depthStencilStateTestOnly = nullptr;
 
         // 混合状态（半透明玻璃混合）
         ID3D11BlendState*      _blendState = nullptr;
+        // 深度预通道用: 关掉颜色写入, 只让深度生效
+        ID3D11BlendState*      _blendStateDepthOnly = nullptr;
         ID3D11RasterizerState* _rasterState = nullptr;
         ID3D11SamplerState*    _samplerState = nullptr;
 

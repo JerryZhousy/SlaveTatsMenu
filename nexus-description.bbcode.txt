@@ -25,7 +25,7 @@ Install it like any other SKSE plugin, with a mod manager or by hand:
 [code]Data\SKSE\Plugins\SlaveTatsMenu.dll
 Data\SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini[/code]
 
-The archive is a FOMOD: it asks for the interface language and writes the matching INI, so there is nothing to hand-edit afterwards. Installing by hand works too - the plugin writes the INI with defaults on first launch if it is missing. There is nothing to switch on in the MCM, no ESP to enable, and no load order position to worry about.
+Install it directly via your mod manager (Mod Organizer 2 or Vortex) or unpack it manually into the game's Data folder. The interface language (English or Simplified Chinese) can be toggled on the fly in the in-game Settings tab or configured via Language = zh / en in the INI. There is nothing to switch on in the MCM, no ESP to enable, and no load order position to worry about.
 
 Source and release: [url=https://github.com/JerryZhousy/SlaveTatsMenu]github.com/JerryZhousy/SlaveTatsMenu[/url]
 

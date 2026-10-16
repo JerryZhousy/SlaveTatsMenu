@@ -196,6 +196,21 @@ namespace stm::ui
             return render::PreviewPart::kBody;
         }
 
+        // 当前预览部位的名字, 只用于显示(部位开关已并入上方「部位」一行)。
+        const char* PreviewPartName(render::PreviewPart a_part)
+        {
+            switch (a_part) {
+            case render::PreviewPart::kFace:
+                return L("面部/头部", "Face/Head");
+            case render::PreviewPart::kHands:
+                return L("手部", "Hands");
+            case render::PreviewPart::kFeet:
+                return L("脚部", "Feet");
+            default:
+                return L("身体", "Body");
+            }
+        }
+
         void SeedEditorFrom(const data::TattooEntry& a_entry)
         {
             auto& state = UiState::Get();
@@ -390,9 +405,8 @@ namespace stm::ui
                     state.hasSelection = false;
                     UpdatePreview("");
                     data::SlotSnapshot::Get().Invalidate();
-                    if (i >= 1 && i <= 4) {
-                        render::MannequinRenderer::Get().SetCurrentPart(AreaToPreviewPart(kAreaIds[i]));
-                    }
+                    // 3D 预览的部位直接跟随这一行的选择(「全部」= 全身), 不再有第二套部位开关
+                    render::MannequinRenderer::Get().SetCurrentPart(AreaToPreviewPart(kAreaIds[i]));
                 }
             }
         }
@@ -617,6 +631,7 @@ namespace stm::ui
                     ImGui::SameLine();
                     if (ImGui::RadioButton(L("3D 模特##v3d", "3D Mannequin##v3d"), s_view3D)) {
                         s_view3D = true;
+                        render::MannequinRenderer::Get().ClearInitFailed();
                     }
                     ImGui::SameLine();
                     if (ImGui::RadioButton(L("2D 贴图##v2d", "2D Texture##v2d"), !s_view3D)) {
@@ -624,7 +639,7 @@ namespace stm::ui
                     }
 
                     if (s_view3D) {
-                        if (!render::MannequinRenderer::Get().IsInitialized()) {
+                        if (!render::MannequinRenderer::Get().IsInitialized() && !render::MannequinRenderer::Get().IsInitFailed()) {
                             auto* bsDev = RE::BSGraphics::Renderer::GetDevice();
                             if (bsDev) {
                                 auto* d3dDev = reinterpret_cast<ID3D11Device*>(bsDev);
@@ -637,7 +652,13 @@ namespace stm::ui
                             }
                         }
 
-                        if (render::MannequinRenderer::Get().IsInitialized()) {
+                        if (render::MannequinRenderer::Get().IsInitFailed()) {
+                            ImGui::Spacing();
+                            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", L("3D 预览初始化失败（请检查日志）", "3D preview init failed (check log)"));
+                            if (ImGui::Button(L("点击重试##retry_3d", "Click to Retry##retry_3d"))) {
+                                render::MannequinRenderer::Get().ClearInitFailed();
+                            }
+                        } else if (render::MannequinRenderer::Get().IsInitialized()) {
                             if (s_autoSpin) {
                                 render::MannequinRenderer::Get().Rotate(0.015f, 0.0f);
                             }
@@ -714,27 +735,16 @@ namespace stm::ui
                                 ImGui::SameLine();
                                 ImGui::Checkbox(L("自转##cam_spin", "Spin##cam_spin"), &s_autoSpin);
 
-                                auto curPart = render::MannequinRenderer::Get().GetCurrentPart();
-                                ImGui::Text("%s:", L("部位", "Part"));
-                                ImGui::SameLine();
-                                if (ImGui::RadioButton(L("身体##part_b", "Body##part_b"), curPart == render::PreviewPart::kBody)) {
-                                    render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kBody);
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::RadioButton(L("面部/头部##part_f", "Face/Head##part_f"), curPart == render::PreviewPart::kFace)) {
-                                    render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kFace);
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::RadioButton(L("手部##part_h", "Hands##part_h"), curPart == render::PreviewPart::kHands)) {
-                                    render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kHands);
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::RadioButton(L("脚部##part_ft", "Feet##part_ft"), curPart == render::PreviewPart::kFeet)) {
-                                    render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kFeet);
-                                }
+                                // 部位不再单独提供开关: 预览部位完全跟随上方「部位」一行,
+                                // 这里只显示当前正在预览哪一部分。
+                                ImGui::TextDisabled("%s: %s%s", L("部位", "Part"),
+                                    PreviewPartName(render::MannequinRenderer::Get().GetCurrentPart()),
+                                    L("（跟随上方部位选择）", " (follows the area selected above)"));
 
                                 ImGui::TextDisabled("%s: %s", L("模型", "Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
 
+                                ImGui::Text("%s:", L("性别", "Sex"));
+                                ImGui::SameLine();
                                 int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
                                 if (ImGui::RadioButton(L("女##mesh_fem", "Female##mesh_fem"), sexChoice == 0)) {
                                     render::MannequinRenderer::Get().InitMeshWithSex(0);
@@ -748,16 +758,15 @@ namespace stm::ui
                                     render::MannequinRenderer::Get().ReloadForPlayerSex();
                                 }
 
-                                ImGui::SameLine();
-                                ImGui::TextUnformatted("|");
+                                ImGui::Text("%s:", L("模型颜色", "Model Color"));
                                 ImGui::SameLine();
                                 int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
-                                if (ImGui::RadioButton(L("全息##mann_holo_q", "Holo##mann_holo_q"), curCol == 0)) {
+                                if (ImGui::RadioButton(L("透明全息蓝##mann_holo_q", "Transparent Hologram##mann_holo_q"), curCol == 0)) {
                                     Config::Get().mannequinColor = MannequinColor::kTransparent;
                                     Config::Get().Save();
                                 }
                                 ImGui::SameLine();
-                                if (ImGui::RadioButton(L("肉色##mann_flesh_q", "Flesh##mann_flesh_q"), curCol == 1)) {
+                                if (ImGui::RadioButton(L("自然肉色##mann_flesh_q", "Natural Flesh##mann_flesh_q"), curCol == 1)) {
                                     Config::Get().mannequinColor = MannequinColor::kFlesh;
                                     Config::Get().Save();
                                 }
@@ -1513,6 +1522,8 @@ namespace stm::ui
                 ImGui::PushItemWidth(260.0f);
                 if (ImGui::SliderFloat(L("文字大小缩放##font_scale", "Font Size Scale##font_scale"), &fScale, 0.75f, 1.50f, "%.2f x")) {
                     config.fontScale = fScale;
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
                 ImGui::PopItemWidth();
@@ -1530,6 +1541,8 @@ namespace stm::ui
                 ImGui::PushItemWidth(260.0f);
                 if (ImGui::SliderFloat(L("窗口背景不透明度##win_alpha", "Window Background Opacity##win_alpha"), &winAlpha, 0.20f, 1.0f, "%.2f")) {
                     config.windowAlpha = winAlpha;
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
                 ImGui::PopItemWidth();
@@ -1578,10 +1591,14 @@ namespace stm::ui
                 ImGui::PushItemWidth(260.0f);
                 if (ImGui::SliderFloat(L("默认宽度##win_w", "Default Width##win_w"), &s_w, 800.0f, 2560.0f, "%.0f px")) {
                     config.windowWidth = std::round(s_w);
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
                 if (ImGui::SliderFloat(L("默认高度##win_h", "Default Height##win_h"), &s_h, 500.0f, 1440.0f, "%.0f px")) {
                     config.windowHeight = std::round(s_h);
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
                 ImGui::PopItemWidth();
@@ -1687,32 +1704,12 @@ namespace stm::ui
                     float prevSz = config.previewSize;
                     if (ImGui::SliderFloat(L("预览图边长##prev_slider", "Preview Dimension##prev_slider"), &prevSz, 64.0f, 256.0f, "%.0f px")) {
                         config.previewSize = prevSz;
+                    }
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
                         config.Save();
                     }
                     ImGui::PopItemWidth();
                 }
-
-                ImGui::Spacing();
-
-                // 3D 模特外观材质
-                ImGui::Text("%s:", L("3D 模特外观材质", "3D Mannequin Appearance"));
-                ImGui::SameLine();
-                int colorChoice = (config.mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
-                bool colorChanged = false;
-                if (ImGui::RadioButton(L("透明全息蓝##mann_trans", "Transparent Hologram##mann_trans"), &colorChoice, 0)) {
-                    colorChanged = true;
-                }
-                ImGui::SameLine();
-                if (ImGui::RadioButton(L("自然肉色##mann_flesh", "Natural Flesh##mann_flesh"), &colorChoice, 1)) {
-                    colorChanged = true;
-                }
-                if (colorChanged) {
-                    config.mannequinColor = (colorChoice == 1) ? MannequinColor::kFlesh : MannequinColor::kTransparent;
-                    config.Save();
-                    SetStatus("3D 模特外观设置已更新并保存！", "3D mannequin appearance updated and saved!");
-                }
-                ImGui::TextDisabled("%s", L("说明: 切换 3D 预览视口中的人体质感，可选择透明全息透光蓝或自然肉色肤质。",
-                                           "Note: Switch 3D preview model appearance between translucent hologram and natural flesh tone."));
 
                 ImGui::Spacing();
             }
@@ -1836,27 +1833,37 @@ namespace stm::ui
                 }
 
                 if (ImGui::SliderFloat(L("默认纹身透明度##def_alpha", "Default Tattoo Opacity##def_alpha"), &config.defaultAlpha, 0.05f, 1.0f, "%.2f")) {
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
 
                 if (ImGui::SliderInt(L("已生效槽位刷新间隔 (毫秒)##slot_refresh", "Applied Slots Refresh Interval (ms)##slot_refresh"), &config.slotRefreshMs, 50, 1000, "%d ms")) {
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
 
                 ImGui::Spacing();
                 if (ImGui::Button(L("恢复全部默认设置##reset_all", "Restore All Defaults##reset_all"), ButtonSize(L("恢复全部默认设置", "Restore All Defaults")))) {
                     config.toggleKey = 0x44;
-                    config.language = Language::kChinese;
+                    // 保留当前界面语言，不强制覆盖
                     config.windowWidth = 1280.0f;
                     config.windowHeight = 720.0f;
                     config.windowAlpha = 0.95f;
                     config.fontScale = 1.0f;
                     config.showPreview = true;
                     config.previewSize = 96.0f;
+                    config.mannequinColor = MannequinColor::kTransparent;
                     config.slotPolicy = SlotPolicy::kAutoFreeSlot;
                     config.defaultAlpha = 1.0f;
                     config.defaultColor = 0x000000;
                     config.slotRefreshMs = 250;
+                    config.probeEnabled = false;
+                    config.probeIntervalMs = 1000;
+                    config.probeArea = "Body";
+                    config.probeSlots = 12;
+                    config.callTraceEnabled = true;
                     s_w = 1280.0f;
                     s_h = 720.0f;
                     config.Save();
@@ -1886,13 +1893,16 @@ namespace stm::ui
 
     bool IsBindingHotkey()
     {
-        return s_bindingHotkey;
+        return s_bindingHotkey && IsWindowOpen();
     }
 
     void ToggleWindow()
     {
         if (g_window) {
             g_window->IsOpen = !g_window->IsOpen;
+            if (!g_window->IsOpen) {
+                s_bindingHotkey = false;
+            }
         }
     }
 
@@ -1946,6 +1956,9 @@ namespace stm::ui
 
         if (justOpened) {
             s_canCloseWithToggleKey = false;
+            if (!UiState::Get().hasSelection) {
+                render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kBody);
+            }
         } else if (toggleImKey != ImGuiKey_None && !ImGui::IsKeyDown(toggleImKey)) {
             s_canCloseWithToggleKey = true;
         }
@@ -1959,6 +1972,7 @@ namespace stm::ui
                 g_window->IsOpen = false;
                 s_wasOpen = false;
                 s_canCloseWithToggleKey = false;
+                s_bindingHotkey = false;
                 return;
             }
         }
@@ -1979,6 +1993,7 @@ namespace stm::ui
                     g_window->IsOpen = false;
                     s_wasOpen = false;
                     s_canCloseWithToggleKey = false;
+                    s_bindingHotkey = false;
                     return;
                 }
             }
@@ -2020,6 +2035,7 @@ namespace stm::ui
             g_window->IsOpen = false;
             s_wasOpen = false;
             s_canCloseWithToggleKey = false;
+            s_bindingHotkey = false;
         }
     }
 }

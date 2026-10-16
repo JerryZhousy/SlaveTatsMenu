@@ -15,8 +15,8 @@ namespace stm::ui
             return s_state;
         }
 
-        // area filter: 0 = all, 1..4 = Body / Face / Hands / Feet
-        int         areaIndex = 0;
+        // area filter: 0 = all, 1..4 = Body / Face / Hands / Feet (default: 1 = Body)
+        int         areaIndex = 1;
 
         // Mod / section picked in panel 1. The tattoo list (panel 2) only exists
         // while a choice is active, so the flag is kept separately from the

@@ -21,7 +21,9 @@ Built with CommonLibSSE-NG, so the DLL covers SE 1.5.39+ and AE. SE 1.5.97 is th
 
 ## Install
 
-Download the release archive and let your mod manager run the FOMOD, which installs `SKSE/Plugins/SlaveTatsMenu.dll` and writes a `SlaveTatsMenu.ini` with the interface language you picked (English or Simplified Chinese). Installing by hand works too: copy the `SKSE` folder into `Data`, then copy the INI you want from `Options/`.
+Install the release archive directly via your mod manager (Mod Organizer 2 or Vortex), which places `SKSE/Plugins/SlaveTatsMenu.dll` and the configuration `SKSE/Plugins/SlaveTatsMenu/SlaveTatsMenu.ini`. Installing by hand works too: copy the `SKSE` folder into your game `Data` directory.
+
+The interface language (Simplified Chinese or English) can be toggled on the fly in the in-game Settings tab or configured via `Language = zh` / `en` in `SlaveTatsMenu.ini`.
 
 Nothing to enable in the MCM, no ESP to activate.
 

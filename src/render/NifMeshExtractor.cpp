@@ -1,4 +1,5 @@
 #include "render/NifMeshExtractor.h"
+#include <SKSE/SKSE.h>
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -22,53 +23,71 @@ namespace stm::render
             uint32_t bsVersion;
         };
         #pragma pack(pop)
+    }
 
-        void ComputeSmoothNormals(std::vector<MannequinVertex>& a_verts, const std::vector<std::uint32_t>& a_indices)
-        {
-            if (a_verts.empty() || a_indices.size() < 3) return;
+    void NifMeshExtractor::ComputeSmoothNormals(std::vector<MannequinVertex>& a_verts, const std::vector<std::uint32_t>& a_indices)
+    {
+        if (a_verts.empty() || a_indices.size() < 3) return;
 
-            for (auto& v : a_verts) {
-                v.norm = { 0.0f, 0.0f, 0.0f };
+        // 先保留 NIF 自带的顶点法线: 不同身体模型的三角形绕序并不统一(实测某身型
+        // 胸口区域 79% 的三角形绕序与自带法线相反), 只按绕序累加会让半个身子被照反,
+        // 表现成"一块发白一块发黑"。自带法线只用来定朝向, 平滑仍由三角形累加得到。
+        const std::size_t count = a_verts.size();
+        std::vector<DirectX::XMFLOAT3> authored(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            authored[i] = a_verts[i].norm;
+        }
+
+        std::vector<DirectX::XMFLOAT3> accumulated(count, DirectX::XMFLOAT3{ 0.0f, 0.0f, 0.0f });
+
+        for (std::size_t i = 0; i + 2 < a_indices.size(); i += 3) {
+            auto i0 = a_indices[i];
+            auto i1 = a_indices[i + 1];
+            auto i2 = a_indices[i + 2];
+            if (i0 < count && i1 < count && i2 < count) {
+                const auto& p0 = a_verts[i0].pos;
+                const auto& p1 = a_verts[i1].pos;
+                const auto& p2 = a_verts[i2].pos;
+
+                float e1x = p1.x - p0.x;
+                float e1y = p1.y - p0.y;
+                float e1z = p1.z - p0.z;
+
+                float e2x = p2.x - p0.x;
+                float e2y = p2.y - p0.y;
+                float e2z = p2.z - p0.z;
+
+                // 面法线 (Cross Product e1 x e2)
+                float cpx = e1y * e2z - e1z * e2y;
+                float cpy = e1z * e2x - e1x * e2z;
+                float cpz = e1x * e2y - e1y * e2x;
+
+                accumulated[i0].x += cpx; accumulated[i0].y += cpy; accumulated[i0].z += cpz;
+                accumulated[i1].x += cpx; accumulated[i1].y += cpy; accumulated[i1].z += cpz;
+                accumulated[i2].x += cpx; accumulated[i2].y += cpy; accumulated[i2].z += cpz;
+            }
+        }
+
+        for (std::size_t i = 0; i < count; ++i) {
+            auto&       n = accumulated[i];
+            const auto& ref = authored[i];
+            const float refLenSq = ref.x * ref.x + ref.y * ref.y + ref.z * ref.z;
+
+            // 与自带法线同向: 绕序反了就把累加结果整体翻过来
+            if (refLenSq > 1e-6f && (n.x * ref.x + n.y * ref.y + n.z * ref.z) < 0.0f) {
+                n.x = -n.x;
+                n.y = -n.y;
+                n.z = -n.z;
             }
 
-            for (std::size_t i = 0; i + 2 < a_indices.size(); i += 3) {
-                auto i0 = a_indices[i];
-                auto i1 = a_indices[i + 1];
-                auto i2 = a_indices[i + 2];
-                if (i0 < a_verts.size() && i1 < a_verts.size() && i2 < a_verts.size()) {
-                    const auto& p0 = a_verts[i0].pos;
-                    const auto& p1 = a_verts[i1].pos;
-                    const auto& p2 = a_verts[i2].pos;
-
-                    float e1x = p1.x - p0.x;
-                    float e1y = p1.y - p0.y;
-                    float e1z = p1.z - p0.z;
-
-                    float e2x = p2.x - p0.x;
-                    float e2y = p2.y - p0.y;
-                    float e2z = p2.z - p0.z;
-
-                    // 面法线 (Cross Product e1 x e2)
-                    float cpx = e1y * e2z - e1z * e2y;
-                    float cpy = e1z * e2x - e1x * e2z;
-                    float cpz = e1x * e2y - e1y * e2x;
-
-                    a_verts[i0].norm.x += cpx; a_verts[i0].norm.y += cpy; a_verts[i0].norm.z += cpz;
-                    a_verts[i1].norm.x += cpx; a_verts[i1].norm.y += cpy; a_verts[i1].norm.z += cpz;
-                    a_verts[i2].norm.x += cpx; a_verts[i2].norm.y += cpy; a_verts[i2].norm.z += cpz;
-                }
-            }
-
-            for (auto& v : a_verts) {
-                float lenSq = v.norm.x * v.norm.x + v.norm.y * v.norm.y + v.norm.z * v.norm.z;
-                if (lenSq > 1e-6f) {
-                    float invLen = 1.0f / std::sqrt(lenSq);
-                    v.norm.x *= invLen;
-                    v.norm.y *= invLen;
-                    v.norm.z *= invLen;
-                } else {
-                    v.norm = { 0.0f, 0.0f, 1.0f };
-                }
+            const float lenSq = n.x * n.x + n.y * n.y + n.z * n.z;
+            if (lenSq > 1e-6f) {
+                const float invLen = 1.0f / std::sqrt(lenSq);
+                a_verts[i].norm = { n.x * invLen, n.y * invLen, n.z * invLen };
+            } else if (refLenSq > 1e-6f) {
+                a_verts[i].norm = ref;  // 没有可用三角形时退回自带法线
+            } else {
+                a_verts[i].norm = { 0.0f, 0.0f, 1.0f };
             }
         }
     }
@@ -120,18 +139,30 @@ namespace stm::render
                     "Data/Meshes/actors/character/character assets/malehead.nif",
                     "Data/meshes/actors/character/character assets/malehead.nif",
                     "meshes/actors/character/character assets/malehead.nif",
+                    "Data/Meshes/KL/High Poly Head/malehead.nif",
+                    "Data/meshes/KL/High Poly Head/malehead.nif",
+                    "meshes/KL/High Poly Head/malehead.nif",
                     "Data/Meshes/actors/character/character assets/femalehead.nif",
                     "Data/meshes/actors/character/character assets/femalehead.nif",
-                    "meshes/actors/character/character assets/femalehead.nif"
+                    "meshes/actors/character/character assets/femalehead.nif",
+                    "Data/Meshes/KL/High Poly Head/femalehead.nif",
+                    "Data/meshes/KL/High Poly Head/femalehead.nif",
+                    "meshes/KL/High Poly Head/femalehead.nif"
                 };
             } else {
                 candidatePaths = {
                     "Data/Meshes/actors/character/character assets/femalehead.nif",
                     "Data/meshes/actors/character/character assets/femalehead.nif",
                     "meshes/actors/character/character assets/femalehead.nif",
+                    "Data/Meshes/KL/High Poly Head/femalehead.nif",
+                    "Data/meshes/KL/High Poly Head/femalehead.nif",
+                    "meshes/KL/High Poly Head/femalehead.nif",
                     "Data/Meshes/actors/character/character assets/malehead.nif",
                     "Data/meshes/actors/character/character assets/malehead.nif",
-                    "meshes/actors/character/character assets/malehead.nif"
+                    "meshes/actors/character/character assets/malehead.nif",
+                    "Data/Meshes/KL/High Poly Head/malehead.nif",
+                    "Data/meshes/KL/High Poly Head/malehead.nif",
+                    "meshes/KL/High Poly Head/malehead.nif"
                 };
             }
             break;
@@ -260,6 +291,12 @@ namespace stm::render
         const std::uint32_t numBlocks = prefix->numBlocks;
         const std::uint32_t bsVersion = prefix->bsVersion;
 
+        // 安全防范：每个 Block 至少需要 2 字节类型索引 + 4 字节大小，numBlocks 绝不可能超出文件上限
+        if (static_cast<std::uint64_t>(numBlocks) * 6ULL > fileSize) {
+            SKSE::log::warn("[RENDER] NifMeshExtractor: invalid numBlocks {} exceeds file capacity", numBlocks);
+            return result;
+        }
+
         // 跳过 3 个 export/process 字符串
         for (int i = 0; i < 3; ++i) {
             if (pos >= fileSize) return result;
@@ -281,13 +318,15 @@ namespace stm::render
             pos += tlen;
         }
 
-        if (pos + numBlocks * 2 > fileSize) return result;
+        const std::size_t typeIndicesSize = static_cast<std::size_t>(numBlocks) * 2;
+        if (pos + typeIndicesSize > fileSize) return result;
         const auto* blockTypeIndices = reinterpret_cast<const std::uint16_t*>(&buffer[pos]);
-        pos += numBlocks * 2;
+        pos += typeIndicesSize;
 
-        if (pos + numBlocks * 4 > fileSize) return result;
+        const std::size_t blockSizesSize = static_cast<std::size_t>(numBlocks) * 4;
+        if (pos + blockSizesSize > fileSize) return result;
         const auto* blockSizes = reinterpret_cast<const std::uint32_t*>(&buffer[pos]);
-        pos += numBlocks * 4;
+        pos += blockSizesSize;
 
         if (pos + 8 > fileSize) return result;
         std::uint32_t numStrings = *reinterpret_cast<const std::uint32_t*>(&buffer[pos]);
@@ -315,7 +354,42 @@ namespace stm::render
             if (curOffset > fileSize) return result;
         }
 
-        // 寻找最优的身体几何体 Block (优先找最大的 NiSkinPartition)
+        // 1. 优先检测 BSDynamicTriShape (Skyrim SE/AE 面部/头部网格结构，其三维顶点存放在动态数据中)
+        std::int32_t dynShapeBlock = -1;
+        for (std::uint32_t i = 0; i < numBlocks; ++i) {
+            if (blockTypeIndices[i] >= blockTypes.size()) continue;
+            const auto& type = blockTypes[blockTypeIndices[i]];
+            if (type == "BSDynamicTriShape") {
+                dynShapeBlock = static_cast<std::int32_t>(i);
+                break;
+            }
+        }
+
+        if (dynShapeBlock != -1) {
+            // 寻找同 NIF 中的 NiSkinPartition 蒙皮与三角形块
+            std::int32_t skinPartBlock = -1;
+            for (std::uint32_t i = 0; i < numBlocks; ++i) {
+                if (blockTypeIndices[i] >= blockTypes.size()) continue;
+                if (blockTypes[blockTypeIndices[i]] == "NiSkinPartition") {
+                    skinPartBlock = static_cast<std::int32_t>(i);
+                    break;
+                }
+            }
+
+            const std::uint8_t* dynData = &buffer[blockOffsets[dynShapeBlock]];
+            std::size_t dynSize = blockSizes[dynShapeBlock];
+            const std::uint8_t* partData = (skinPartBlock != -1) ? &buffer[blockOffsets[skinPartBlock]] : nullptr;
+            std::size_t partSize = (skinPartBlock != -1) ? blockSizes[skinPartBlock] : 0;
+
+            if (ParseDynamicTriShape(dynData, dynSize, partData, partSize, bsVersion, result.vertices, result.indices)) {
+                fs::path p(a_filePath);
+                result.shapeName = p.stem().string() + " (BSDynamicTriShape)";
+                result.success = true;
+                return result;
+            }
+        }
+
+        // 2. 寻找最优的身体几何体 Block (优先找最大的 NiSkinPartition)
         std::int32_t targetPartitionBlock = -1;
         std::size_t largestPartitionSize = 0;
 
@@ -391,6 +465,204 @@ namespace stm::render
         return result;
     }
 
+    bool NifMeshExtractor::ParseDynamicTriShape(
+        const std::uint8_t* a_shapeData,
+        std::size_t a_shapeSize,
+        const std::uint8_t* a_partitionData,
+        std::size_t a_partitionSize,
+        std::uint32_t a_bsVersion,
+        std::vector<MannequinVertex>& a_outVerts,
+        std::vector<std::uint32_t>& a_outIndices)
+    {
+        if (!a_shapeData || a_shapeSize < 124) return false;
+
+        std::size_t p = 0;
+        if (p + 8 > a_shapeSize) return false;
+        std::int32_t nameIdx = *reinterpret_cast<const std::int32_t*>(&a_shapeData[p]);
+        p += 4;
+        std::uint32_t numExtra = *reinterpret_cast<const std::uint32_t*>(&a_shapeData[p]);
+        p += 4;
+
+        std::size_t headerRemaining = 4 * numExtra + 92;
+        if (p + headerRemaining + 16 > a_shapeSize) return false;
+        p += headerRemaining;
+
+        std::uint64_t vDesc = *reinterpret_cast<const std::uint64_t*>(&a_shapeData[p]);
+        p += 8;
+        std::uint16_t numTri = *reinterpret_cast<const std::uint16_t*>(&a_shapeData[p]);
+        p += 2;
+        std::uint16_t numVert = *reinterpret_cast<const std::uint16_t*>(&a_shapeData[p]);
+        p += 2;
+        std::uint32_t dataSz = *reinterpret_cast<const std::uint32_t*>(&a_shapeData[p]);
+        p += 4;
+
+        p += dataSz + static_cast<std::size_t>(numTri) * 6;
+        if (p + 4 > a_shapeSize) return false;
+
+        std::uint32_t dynDataSz = *reinterpret_cast<const std::uint32_t*>(&a_shapeData[p]);
+        p += 4;
+        if (dynDataSz == 0 && (p + 4 <= a_shapeSize)) {
+            dynDataSz = *reinterpret_cast<const std::uint32_t*>(&a_shapeData[p]);
+            p += 4;
+        }
+
+        std::uint32_t vertCount = dynDataSz / 16;
+        if (vertCount == 0 || (p + static_cast<std::size_t>(vertCount) * 16 > a_shapeSize)) {
+            return false;
+        }
+
+        // 提取顶点位置并计算包围盒
+        float minX = 1e9f, maxX = -1e9f;
+        float minY = 1e9f, maxY = -1e9f;
+        float minZ = 1e9f, maxZ = -1e9f;
+
+        const auto* dynVerts = reinterpret_cast<const float*>(&a_shapeData[p]);
+        for (std::uint32_t i = 0; i < vertCount; ++i) {
+            float x = dynVerts[i * 4 + 0];
+            float y = dynVerts[i * 4 + 1];
+            float z = dynVerts[i * 4 + 2];
+            if (!std::isnan(x) && !std::isinf(x) &&
+                !std::isnan(y) && !std::isinf(y) &&
+                !std::isnan(z) && !std::isinf(z)) {
+                minX = std::min(minX, x); maxX = std::max(maxX, x);
+                minY = std::min(minY, y); maxY = std::max(maxY, y);
+                minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+            }
+        }
+
+        if (minX > maxX || minY > maxY || minZ > maxZ) {
+            return false;
+        }
+
+        float dimX = std::max(0.1f, maxX - minX);
+        float dimY = std::max(0.1f, maxY - minY);
+        float dimZ = std::max(0.1f, maxZ - minZ);
+        float maxDim = std::max({ dimX, dimY, dimZ });
+        if (maxDim < 1.0f) {
+            return false;
+        }
+        float scale = 1.9f / maxDim;
+
+        float centerX = (minX + maxX) * 0.5f;
+        float centerY_nif = (minY + maxY) * 0.5f;
+        float centerZ = (minZ + maxZ) * 0.5f;
+
+        // 尝试从 NiSkinPartition 提取 UV
+        std::vector<DirectX::XMFLOAT2> uvs(vertCount, DirectX::XMFLOAT2(0.5f, 0.5f));
+        if (a_partitionData && a_partitionSize > 20) {
+            std::uint32_t partDataSize = *reinterpret_cast<const std::uint32_t*>(&a_partitionData[4]);
+            std::uint32_t partStride = *reinterpret_cast<const std::uint32_t*>(&a_partitionData[8]);
+            if (partStride >= 4) {
+                const std::uint8_t* vPtr = a_partitionData + 20;
+                for (std::uint32_t i = 0; i < vertCount; ++i) {
+                    if (20 + (i + 1) * partStride <= a_partitionSize && (i + 1) * partStride <= partDataSize) {
+                        std::uint16_t uRaw = *reinterpret_cast<const std::uint16_t*>(vPtr + i * partStride + 0);
+                        std::uint16_t vRaw = *reinterpret_cast<const std::uint16_t*>(vPtr + i * partStride + 2);
+                        float u = HalfToFloat(uRaw);
+                        float v = HalfToFloat(vRaw);
+                        if (!std::isnan(u) && !std::isinf(u)) uvs[i].x = u;
+                        if (!std::isnan(v) && !std::isinf(v)) uvs[i].y = v;
+                    }
+                }
+            }
+        }
+
+        a_outVerts.clear();
+        a_outVerts.reserve(vertCount);
+        for (std::uint32_t i = 0; i < vertCount; ++i) {
+            float x = dynVerts[i * 4 + 0];
+            float y = dynVerts[i * 4 + 1];
+            float z = dynVerts[i * 4 + 2];
+            if (std::isnan(x) || std::isinf(x)) x = centerX;
+            if (std::isnan(y) || std::isinf(y)) y = centerY_nif;
+            if (std::isnan(z) || std::isinf(z)) z = centerZ;
+
+            MannequinVertex vert{};
+            vert.pos.x = (x - centerX) * scale;
+            vert.pos.y = (z - centerZ) * scale;
+            vert.pos.z = (y - centerY_nif) * scale; // 正面朝前 (+Z)
+            vert.uv = uvs[i];
+            vert.norm = { vert.pos.x, 0.2f, vert.pos.z };
+            a_outVerts.push_back(vert);
+        }
+
+        // 提取三角形索引
+        a_outIndices.clear();
+        if (a_partitionData && a_partitionSize > 20) {
+            std::uint32_t numPartitions = *reinterpret_cast<const std::uint32_t*>(&a_partitionData[0]);
+            std::uint32_t partDataSize = *reinterpret_cast<const std::uint32_t*>(&a_partitionData[4]);
+            std::size_t triOffset = 20 + partDataSize;
+
+            for (std::uint32_t pIdx = 0; pIdx < numPartitions; ++pIdx) {
+                if (triOffset + 10 > a_partitionSize) break;
+
+                std::uint16_t partVerts = *reinterpret_cast<const std::uint16_t*>(&a_partitionData[triOffset]);
+                std::uint16_t partTriangles = *reinterpret_cast<const std::uint16_t*>(&a_partitionData[triOffset + 2]);
+                std::uint16_t partBones = *reinterpret_cast<const std::uint16_t*>(&a_partitionData[triOffset + 4]);
+                std::uint16_t partStrips = *reinterpret_cast<const std::uint16_t*>(&a_partitionData[triOffset + 6]);
+                std::uint16_t partWeights = *reinterpret_cast<const std::uint16_t*>(&a_partitionData[triOffset + 8]);
+                triOffset += 10;
+
+                triOffset += partBones * 2;
+
+                if (triOffset >= a_partitionSize) break;
+                uint8_t hasVMap = a_partitionData[triOffset++];
+                if (hasVMap) {
+                    if (triOffset + partVerts * 2 > a_partitionSize) break;
+                    triOffset += partVerts * 2;
+                }
+
+                if (triOffset >= a_partitionSize) break;
+                uint8_t hasWeights = a_partitionData[triOffset++];
+                if (hasWeights) {
+                    if (triOffset + static_cast<std::size_t>(partVerts) * partWeights * 4 > a_partitionSize) break;
+                    triOffset += static_cast<std::size_t>(partVerts) * partWeights * 4;
+                }
+
+                if (triOffset >= a_partitionSize) break;
+                uint8_t hasFaces = a_partitionData[triOffset++];
+                if (hasFaces && partStrips == 0) {
+                    if (triOffset + static_cast<std::size_t>(partTriangles) * 6 > a_partitionSize) break;
+                    const auto* triList = reinterpret_cast<const uint16_t*>(&a_partitionData[triOffset]);
+                    triOffset += static_cast<std::size_t>(partTriangles) * 3 * 2;
+
+                    for (std::uint16_t t = 0; t < partTriangles; ++t) {
+                        uint32_t v0 = triList[t * 3 + 0];
+                        uint32_t v1 = triList[t * 3 + 1];
+                        uint32_t v2 = triList[t * 3 + 2];
+                        if (v0 < vertCount && v1 < vertCount && v2 < vertCount) {
+                            a_outIndices.push_back(v0);
+                            a_outIndices.push_back(v1);
+                            a_outIndices.push_back(v2);
+                        }
+                    }
+                }
+
+                if (triOffset < a_partitionSize) {
+                    uint8_t hasBIdx = a_partitionData[triOffset++];
+                    if (hasBIdx) {
+                        if (triOffset + static_cast<std::size_t>(partVerts) * partWeights > a_partitionSize) break;
+                        triOffset += static_cast<std::size_t>(partVerts) * partWeights;
+                    }
+                }
+
+                if (a_bsVersion >= 100) {
+                    std::size_t sseFooter = 1 + 1 + 8 + static_cast<std::size_t>(partTriangles) * 6;
+                    if (triOffset + sseFooter <= a_partitionSize) {
+                        triOffset += sseFooter;
+                    }
+                }
+            }
+        }
+
+        if (!a_outVerts.empty() && !a_outIndices.empty()) {
+            ComputeSmoothNormals(a_outVerts, a_outIndices);
+            return true;
+        }
+
+        return false;
+    }
+
     bool NifMeshExtractor::ParseNiSkinPartition(
         const std::uint8_t* a_data,
         std::size_t a_size,
@@ -409,7 +681,7 @@ namespace stm::render
         std::uint32_t dataSize = *reinterpret_cast<const std::uint32_t*>(&a_data[4]);
         std::uint32_t vertexStride = *reinterpret_cast<const std::uint32_t*>(&a_data[8]);
 
-        if (vertexStride < 16 || dataSize == 0 || (20 + dataSize) > a_size) {
+        if (vertexStride < 16 || dataSize == 0 || static_cast<std::size_t>(dataSize) > a_size - 20) {
             return false;
         }
 
@@ -456,6 +728,9 @@ namespace stm::render
         float dimY = std::max(0.1f, maxY - minY);
         float dimZ = std::max(0.1f, maxZ - minZ);
         float maxDim = std::max({ dimX, dimY, dimZ });
+        if (maxDim < 1.0f) {
+            return false;
+        }
         float scale = 1.9f / maxDim; // 缩放到合适视口尺度
 
         // 判断 UV 偏移：Skyrim SE (vertexStride >= 28) 包含 bitangent/unusedW (4 字节)，UV 在 offset 16
@@ -488,7 +763,7 @@ namespace stm::render
             // 坐标轴变换并自适应居中：老滚 (X右, Y前, Z上) -> 视口 (X右, Y上, Z前)
             vert.pos.x = (nx - centerX) * scale;
             vert.pos.y = (nz - centerZ) * scale;
-            vert.pos.z = -(ny - centerY_nif) * scale;
+            vert.pos.z = (ny - centerY_nif) * scale;
 
             // 解析顶点法线 (ByteVector3 位于 offset 20，若不可用则用向外辐射法线兜底)
             if (vertexStride >= 24) {
@@ -497,7 +772,7 @@ namespace stm::render
                 float normZ = (static_cast<float>(v[22]) / 127.5f) - 1.0f;
                 vert.norm.x = normX;
                 vert.norm.y = normZ;
-                vert.norm.z = -normY;
+                vert.norm.z = normY;
                 float nlen = std::sqrt(vert.norm.x * vert.norm.x + vert.norm.y * vert.norm.y + vert.norm.z * vert.norm.z);
                 if (nlen > 0.001f && !std::isnan(nlen)) {
                     vert.norm.x /= nlen;
@@ -561,9 +836,11 @@ namespace stm::render
                     uint16_t i1 = triList[t * 3 + 1];
                     uint16_t i2 = triList[t * 3 + 2];
 
-                    uint32_t v0 = (vMap && i0 < partVerts) ? vMap[i0] : i0;
-                    uint32_t v1 = (vMap && i1 < partVerts) ? vMap[i1] : i1;
-                    uint32_t v2 = (vMap && i2 < partVerts) ? vMap[i2] : i2;
+                    // Skyrim SE/AE (bsVersion >= 100) 下共享全局顶点缓冲，三角形索引本来就是全局顶点索引，
+                    // 绝不能再以局部索引查 vMap 二次映射，否则会导致顶点乱飞、撕碎网格。
+                    uint32_t v0 = i0;
+                    uint32_t v1 = i1;
+                    uint32_t v2 = i2;
 
                     if (v0 < numVertices && v1 < numVertices && v2 < numVertices) {
                         a_outIndices.push_back(v0);
@@ -609,7 +886,9 @@ namespace stm::render
     {
         if (a_numVertices == 0 || a_numTriangles == 0) return false;
 
-        std::size_t triBytes = a_numTriangles * 3 * sizeof(std::uint16_t);
+        std::uint64_t totalTriPoints = static_cast<std::uint64_t>(a_numTriangles) * 3ULL;
+        if (totalTriPoints > (std::numeric_limits<std::size_t>::max() / sizeof(std::uint16_t))) return false;
+        std::size_t triBytes = static_cast<std::size_t>(totalTriPoints * sizeof(std::uint16_t));
         if (triBytes > a_size) return false;
 
         std::size_t vertexBytesTotal = a_size - triBytes;
@@ -651,6 +930,7 @@ namespace stm::render
         float dimY = std::max(0.1f, maxY - minY);
         float dimZ = std::max(0.1f, maxZ - minZ);
         float maxDim = std::max({ dimX, dimY, dimZ });
+        if (maxDim < 1.0f) return false;
         float scale = 1.9f / maxDim;
 
         const std::size_t uvOffset = (stride >= 28) ? 16 : 12;
@@ -680,13 +960,13 @@ namespace stm::render
             if (std::isnan(z) || std::isinf(z)) z = centerZ;
 
             MannequinVertex vert{};
-            vert.pos = { (x - centerX) * scale, (z - centerZ) * scale, -(y - centerY_nif) * scale };
+            vert.pos = { (x - centerX) * scale, (z - centerZ) * scale, (y - centerY_nif) * scale };
             vert.norm = { vert.pos.x, 0.2f, vert.pos.z };
             if (stride >= 24) {
                 float normX = (static_cast<float>(v[20]) / 127.5f) - 1.0f;
                 float normY = (static_cast<float>(v[21]) / 127.5f) - 1.0f;
                 float normZ = (static_cast<float>(v[22]) / 127.5f) - 1.0f;
-                vert.norm = { normX, normZ, -normY };
+                vert.norm = { normX, normZ, normY };
                 float nlen = std::sqrt(vert.norm.x * vert.norm.x + vert.norm.y * vert.norm.y + vert.norm.z * vert.norm.z);
                 if (nlen > 0.001f && !std::isnan(nlen)) {
                     vert.norm.x /= nlen; vert.norm.y /= nlen; vert.norm.z /= nlen;

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_set>
 
 namespace stm::data
 {
@@ -14,6 +15,23 @@ namespace stm::data
         bool IsSafeAscii(unsigned char a_c)
         {
             return std::isalnum(a_c) != 0 || a_c == ' ' || a_c == '-' || a_c == '_';
+        }
+
+        bool IsReservedDeviceName(std::string_view a_name)
+        {
+            std::string upper;
+            upper.reserve(a_name.size());
+            for (char c : a_name) {
+                upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+            }
+
+            static const std::unordered_set<std::string_view> kReserved = {
+                "CON", "PRN", "AUX", "NUL",
+                "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+                "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+            };
+
+            return kReserved.find(upper) != kReserved.end();
         }
     }
 
@@ -52,6 +70,8 @@ namespace stm::data
 
         if (out.empty()) {
             out = "preset";
+        } else if (IsReservedDeviceName(out)) {
+            out = "_" + out;
         }
         return out;
     }

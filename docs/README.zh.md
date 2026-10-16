@@ -101,7 +101,7 @@
 ToggleKey = 0x44        ; 呼出快捷键，DirectInput 扫描码
 DefaultColor = 0x000000 ; 新纹身的默认颜色
 DefaultAlpha = 1.0      ; 新纹身的默认透明度
-Language = en           ; en / zh，FOMOD 安装包按选择写好这一行
+Language = zh           ; zh / en，可在游戏内设置一键切换或手改此项
 
 [UI]
 WindowWidth = 1280.0

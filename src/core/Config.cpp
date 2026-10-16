@@ -74,8 +74,13 @@ namespace stm
             SKSE::log::error("Config: could not create directory {}: {}", path.parent_path().string(), ec.message());
         }
 
+        const auto pathStr = path.string();
+
         CSimpleIniA ini;
         ini.SetUnicode();
+
+        // 先尝试加载已有文件，以保留原 INI 文件中的所有注释和文档排版
+        ini.LoadFile(pathStr.c_str());
 
         ini.SetLongValue("General", "ToggleKey", toggleKey, nullptr, /*a_bUseHex=*/true);
         ini.SetDoubleValue("General", "DefaultAlpha", defaultAlpha);
@@ -98,7 +103,6 @@ namespace stm
         ini.SetLongValue("Debug", "ProbeSlots", probeSlots);
         ini.SetBoolValue("Debug", "CallTrace", callTraceEnabled);
 
-        const auto pathStr = path.string();
         const SI_Error rc = ini.SaveFile(pathStr.c_str());
         if (rc < 0) {
             SKSE::log::error("Config: could not write {} (error {})", pathStr, static_cast<int>(rc));

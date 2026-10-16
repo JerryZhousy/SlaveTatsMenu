@@ -84,8 +84,14 @@ foreach ($file in $payload) {
 
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $archive = Join-Path $outDir $ArchiveName
-if (Test-Path $archive) { Remove-Item $archive -Force }
-Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal
+if (Test-Path $archive) {
+    $trashDir = 'D:\待删除'
+    if (-not (Test-Path $trashDir)) { New-Item -ItemType Directory -Path $trashDir -Force | Out-Null }
+    $trashTarget = Join-Path $trashDir ("SlaveTatsMenu_" + (Get-Date -Format 'yyyyMMdd_HHmmss') + ".zip")
+    Move-Item $archive $trashTarget -Force
+    Write-Host "  -> Moved existing archive to $trashTarget" -ForegroundColor Gray
+}
+Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal -Force
 
 # --- report -----------------------------------------------------------------------------------
 

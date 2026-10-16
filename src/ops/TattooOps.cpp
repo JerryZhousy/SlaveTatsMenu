@@ -88,6 +88,18 @@ namespace stm::ops
             return -1;
         }
 
+        // Which slot actually holds this tattoo handle in the given area, or -1.
+        int FindSlotOfHandle(RE::Actor* a_actor, std::string_view a_area, std::int32_t a_handle)
+        {
+            const int maxSlots = ng::MaxSlots(a_area);
+            for (int slot = 0; slot < maxSlots; ++slot) {
+                if (ng::GetAppliedInSlot(a_actor, a_area, slot) == a_handle) {
+                    return slot;
+                }
+            }
+            return -1;
+        }
+
         std::string LocaleText(const char* a_zh, const char* a_en)
         {
             return Config::Get().IsChinese() ? std::string(a_zh) : std::string(a_en);
@@ -189,7 +201,10 @@ namespace stm::ops
                         proceedWithSlot = false;
                     } else if (Config::Get().slotPolicy == SlotPolicy::kOverwrite) {
                         SKSE::log::info("Ops: slot {} occupied in {}, removing existing per overwrite policy", a_request.targetSlot, a_request.tattoo.area);
-                        ng::RemoveFromSlot(actor, a_request.tattoo.area, a_request.targetSlot, true);
+                        if (ng::RemoveFromSlot(actor, a_request.tattoo.area, a_request.targetSlot, true) != ng::Status::kOk) {
+                            SKSE::log::warn("Ops: failed to remove existing tattoo from slot {} in {}, falling back to auto allocation", a_request.targetSlot, a_request.tattoo.area);
+                            proceedWithSlot = false;
+                        }
                     } else {
                         SKSE::log::info("Ops: slot {} occupied in {}, falling back to auto allocation per autofree policy", a_request.targetSlot, a_request.tattoo.area);
                         proceedWithSlot = false;
@@ -217,13 +232,25 @@ namespace stm::ops
                             const auto landed = ng::GetAppliedInSlot(actor, a_request.tattoo.area, a_request.targetSlot);
                             data::SlotSnapshot::Get().Invalidate();
 
-                            if (landed > 0) {
+                            if (landed == added && landed > 0) {
                                 const std::string target = name + " -> " + a_request.tattoo.area + " #" + std::to_string(a_request.targetSlot);
                                 PushOutcome("Apply",
                                     target,
                                     actor,
                                     LocaleText("已写入指定槽位", "placed into the requested slot"),
                                     LocaleText("账本已写入指定槽位，但 3D 未加载，同步被推迟", "written to the requested slot, but the 3D is not loaded so the sync was postponed"));
+                                return;
+                            }
+
+                            // 若指定槽位未写入目标 handle，检查是否被自动分配到了其他槽位
+                            const int actualSlot = FindSlotOfHandle(actor, a_request.tattoo.area, added);
+                            if (actualSlot >= 0) {
+                                const std::string target = name + " -> " + a_request.tattoo.area + " #" + std::to_string(actualSlot);
+                                PushOutcome("Apply",
+                                    target,
+                                    actor,
+                                    LocaleText("指定槽位不可用，已自动写入槽位", "requested slot unavailable, placed into auto slot"),
+                                    LocaleText("账本已写入其他槽位，但 3D 未加载，同步被推迟", "written to auto slot, but the 3D is not loaded so the sync was postponed"));
                                 return;
                             }
 

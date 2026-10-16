@@ -6,11 +6,14 @@
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
+#include <mutex>
 
 namespace stm::diag
 {
     namespace
     {
+        std::mutex g_traceMutex;
+
         struct Shim
         {
             slavetats::Addresses  original{};
@@ -135,6 +138,7 @@ namespace stm::diag
         // writable for the duration of the swap.
         void PatchTable(slavetats::Addresses* a_table)
         {
+            std::lock_guard<std::mutex> lock(g_traceMutex);
             if (!a_table) {
                 return;
             }
@@ -173,23 +177,21 @@ namespace stm::diag
 
         void RestoreTable()
         {
+            std::lock_guard<std::mutex> lock(g_traceMutex);
             if (!g_shim.installed || !g_shim.table) {
                 return;
             }
 
             DWORD previous = 0;
-            if (::VirtualProtect(g_shim.table, sizeof(slavetats::Addresses), PAGE_READWRITE, &previous)) {
-                g_shim.table->simple_add_tattoo = g_shim.original.simple_add_tattoo;
-                g_shim.table->simple_remove_tattoo = g_shim.original.simple_remove_tattoo;
-                g_shim.table->synchronize_tattoos = g_shim.original.synchronize_tattoos;
-                g_shim.table->add_tattoo = g_shim.original.add_tattoo;
-                g_shim.table->add_and_get_tattoo = g_shim.original.add_and_get_tattoo;
-                g_shim.table->remove_tattoos = g_shim.original.remove_tattoos;
-                g_shim.table->remove_tattoo_from_slot = g_shim.original.remove_tattoo_from_slot;
-
-                DWORD ignored = 0;
-                ::VirtualProtect(g_shim.table, sizeof(slavetats::Addresses), previous, &ignored);
+            if (!::VirtualProtect(g_shim.table, sizeof(slavetats::Addresses), PAGE_READWRITE, &previous)) {
+                SKSE::log::error("[CALLTRACE] VirtualProtect failed (error {}), cannot restore original entries", ::GetLastError());
+                return;
             }
+
+            *g_shim.table = g_shim.original;
+
+            DWORD ignored = 0;
+            ::VirtualProtect(g_shim.table, sizeof(slavetats::Addresses), previous, &ignored);
 
             g_shim.table = nullptr;
             g_shim.installed = false;
@@ -218,6 +220,7 @@ namespace stm::diag
 
     bool CallTraceInstalled()
     {
+        std::lock_guard<std::mutex> lock(g_traceMutex);
         return g_shim.installed;
     }
 }

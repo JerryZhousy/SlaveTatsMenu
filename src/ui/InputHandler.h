@@ -38,7 +38,7 @@ namespace stm::ui
                     continue;
                 }
 
-                if (IsBindingHotkey()) {
+                if (IsBindingHotkey() && IsWindowOpen()) {
                     continue;
                 }
 

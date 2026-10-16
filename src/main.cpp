@@ -8,6 +8,7 @@
 #include "data/TattooDatabase.h"
 #include "diag/CallTrace.h"
 #include "diag/Probe.h"
+#include "render/MannequinRenderer.h"
 #include "ui/InputHandler.h"
 #include "ui/Ui.h"
 
@@ -132,6 +133,11 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
         SKSE::log::critical("Boot: messaging interface unavailable");
         return false;
     }
+
+    std::atexit([] {
+        stm::diag::Stop();
+        stm::render::MannequinRenderer::Get().Shutdown();
+    });
 
     messaging->RegisterListener(OnMessage);
     return true;

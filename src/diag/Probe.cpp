@@ -20,6 +20,18 @@ namespace stm::diag
         std::atomic_bool g_running{ false };
         std::thread      g_thread;
 
+        struct ProbeThreadGuard
+        {
+            ~ProbeThreadGuard()
+            {
+                g_running.store(false);
+                if (g_thread.joinable()) {
+                    g_thread.detach();
+                }
+            }
+        };
+        static ProbeThreadGuard s_probeGuard;
+
         // game-thread-only state
         bool        g_loggedBaselineData = false;
         bool        g_loggedOverlayNames = false;
@@ -379,7 +391,7 @@ namespace stm::diag
 
     void Start()
     {
-        if (g_running.exchange(true)) {
+        if (g_running.load()) {
             return;
         }
 
@@ -387,24 +399,31 @@ namespace stm::diag
             g_thread.join();
         }
 
-        g_thread = std::thread([] {
-            while (g_running.load()) {
-                const int interval = std::clamp(Config::Get().probeIntervalMs, 100, 60000);
+        g_running.store(true);
+        try {
+            g_thread = std::thread([] {
+                while (g_running.load()) {
+                    const int interval = std::clamp(Config::Get().probeIntervalMs, 100, 60000);
 
-                // Sleep in slices so Stop() returns quickly.
-                for (int slept = 0; slept < interval && g_running.load();) {
-                    const int slice = std::min(50, interval - slept);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(slice));
-                    slept += slice;
+                    // Sleep in slices so Stop() returns quickly.
+                    for (int slept = 0; slept < interval && g_running.load();) {
+                        const int slice = std::min(50, interval - slept);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+                        slept += slice;
+                    }
+
+                    if (!g_running.load()) {
+                        break;
+                    }
+
+                    PostToGameThread([] { RunTick(); });
                 }
-
-                if (!g_running.load()) {
-                    break;
-                }
-
-                PostToGameThread([] { RunTick(); });
-            }
-        });
+            });
+        } catch (const std::exception& e) {
+            g_running.store(false);
+            SKSE::log::error("[PROBE] failed to create thread: {}", e.what());
+            return;
+        }
 
         SKSE::log::info("[PROBE] started (interval={}ms, area={}, slots={})", Config::Get().probeIntervalMs, Config::Get().probeArea, SlotCount());
     }
