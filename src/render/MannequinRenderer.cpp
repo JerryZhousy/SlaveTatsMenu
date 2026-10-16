@@ -99,8 +99,8 @@ namespace stm::render
             DirectX::XMFLOAT4 params;
         };
 
-        // 生成优雅的 3D 人偶网格（标准 UV 躯干、腰肢、臀腿基础轮廓）
-        void GenerateMannequinMesh(std::vector<MannequinVertex>& a_vertices, std::vector<std::uint32_t>& a_indices)
+        // 生成优雅的 3D 人偶身体网格（标准老滚 Body UV 躯干、腰肢、臀腿基础轮廓）
+        void GenerateBodyMesh(std::vector<MannequinVertex>& a_vertices, std::vector<std::uint32_t>& a_indices)
         {
             a_vertices.clear();
             a_indices.clear();
@@ -177,6 +177,207 @@ namespace stm::render
                 }
             }
         }
+
+        // 生成 3D 人体头部网格（老滚 Face UV 规范：u = 0.5 为面部中央鼻梁/前额，u = 0 与 u = 1 为后脑耳后）
+        void GenerateHeadMesh(std::vector<MannequinVertex>& a_vertices, std::vector<std::uint32_t>& a_indices)
+        {
+            a_vertices.clear();
+            a_indices.clear();
+
+            constexpr int slices = 36;
+            constexpr int stacks = 32;
+
+            for (int i = 0; i <= stacks; ++i) {
+                float v = static_cast<float>(i) / static_cast<float>(stacks);
+                // 老滚 Face UV: v = 0.0 为头顶，v = 1.0 为颈部下方
+                float y = (0.5f - v) * 1.5f;
+
+                float r = 0.38f;
+                if (y > 0.15f) {
+                    float t = std::clamp((y - 0.15f) / 0.60f, 0.0f, 1.0f);
+                    r = 0.38f * std::sqrt(std::max(0.01f, 1.0f - t * t));
+                } else if (y < -0.25f) {
+                    float t = std::clamp((-y - 0.25f) / 0.50f, 0.0f, 1.0f);
+                    r = 0.38f - 0.14f * t;
+                }
+
+                for (int j = 0; j <= slices; ++j) {
+                    float u = static_cast<float>(j) / static_cast<float>(slices);
+                    float theta = (u - 0.5f) * 2.0f * 3.14159265f;
+
+                    float rx = r * 0.92f;
+                    float rz = r * 1.05f;
+
+                    float front = std::max(0.0f, std::cos(theta));
+                    if (y > -0.2f && y < 0.25f) {
+                        rz += front * 0.06f; // 面颊
+                    }
+                    if (y > -0.05f && y < 0.12f && front > 0.7f) {
+                        rz += (front - 0.7f) * 0.15f; // 鼻梁
+                    }
+
+                    float x = rx * std::sin(theta);
+                    float z = rz * std::cos(theta);
+
+                    MannequinVertex vert{};
+                    vert.pos = { x, y, z };
+
+                    DirectX::XMFLOAT3 n{ x / std::max(0.01f, rx), (y * 0.3f), z / std::max(0.01f, rz) };
+                    float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+                    vert.norm = (len > 0.001f) ? DirectX::XMFLOAT3{ n.x / len, n.y / len, n.z / len } : DirectX::XMFLOAT3{ 0.f, 0.f, 1.f };
+
+                    vert.uv = { u, v };
+                    a_vertices.push_back(vert);
+                }
+            }
+
+            for (int i = 0; i < stacks; ++i) {
+                for (int j = 0; j < slices; ++j) {
+                    int first = i * (slices + 1) + j;
+                    int second = first + slices + 1;
+
+                    a_indices.push_back(first);
+                    a_indices.push_back(second);
+                    a_indices.push_back(first + 1);
+
+                    a_indices.push_back(second);
+                    a_indices.push_back(second + 1);
+                    a_indices.push_back(first + 1);
+                }
+            }
+        }
+
+        // 生成 3D 手部网格（老滚 Hands UV 规范：左手在 u in [0, 0.5]，右手在 u in [0.5, 1.0]）
+        void GenerateHandsMesh(std::vector<MannequinVertex>& a_vertices, std::vector<std::uint32_t>& a_indices)
+        {
+            a_vertices.clear();
+            a_indices.clear();
+
+            constexpr int slices = 20;
+            constexpr int stacks = 24;
+
+            for (int side = 0; side < 2; ++side) {
+                const float centerX = (side == 0) ? -0.42f : 0.42f;
+                const float uMin = (side == 0) ? 0.0f : 0.5f;
+                const float uMax = (side == 0) ? 0.5f : 1.0f;
+                const std::uint32_t baseVertex = static_cast<std::uint32_t>(a_vertices.size());
+
+                for (int i = 0; i <= stacks; ++i) {
+                    float v = static_cast<float>(i) / static_cast<float>(stacks);
+                    float y = (0.5f - v) * 1.4f;
+
+                    float rx = 0.18f;
+                    float rz = 0.08f;
+                    if (y > 0.2f) {
+                        rx = 0.14f;
+                        rz = 0.11f;
+                    } else if (y < -0.3f) {
+                        float t = (-y - 0.3f) / 0.4f;
+                        rx = 0.18f - 0.06f * t;
+                        rz = 0.08f - 0.03f * t;
+                    }
+
+                    for (int j = 0; j <= slices; ++j) {
+                        float segU = static_cast<float>(j) / static_cast<float>(slices);
+                        float u = uMin + segU * (uMax - uMin);
+                        float theta = segU * 2.0f * 3.14159265f;
+
+                        float x = centerX + rx * std::sin(theta);
+                        float z = rz * std::cos(theta);
+
+                        MannequinVertex vert{};
+                        vert.pos = { x, y, z };
+
+                        DirectX::XMFLOAT3 n{ std::sin(theta), 0.1f, std::cos(theta) };
+                        float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+                        vert.norm = { n.x / len, n.y / len, n.z / len };
+
+                        vert.uv = { u, v };
+                        a_vertices.push_back(vert);
+                    }
+                }
+
+                for (int i = 0; i < stacks; ++i) {
+                    for (int j = 0; j < slices; ++j) {
+                        std::uint32_t first = baseVertex + i * (slices + 1) + j;
+                        std::uint32_t second = first + slices + 1;
+
+                        a_indices.push_back(first);
+                        a_indices.push_back(second);
+                        a_indices.push_back(first + 1);
+
+                        a_indices.push_back(second);
+                        a_indices.push_back(second + 1);
+                        a_indices.push_back(first + 1);
+                    }
+                }
+            }
+        }
+
+        // 生成 3D 脚部网格（老滚 Feet UV 规范：左脚在 u in [0, 0.5]，右脚在 u in [0.5, 1.0]）
+        void GenerateFeetMesh(std::vector<MannequinVertex>& a_vertices, std::vector<std::uint32_t>& a_indices)
+        {
+            a_vertices.clear();
+            a_indices.clear();
+
+            constexpr int slices = 20;
+            constexpr int stacks = 24;
+
+            for (int side = 0; side < 2; ++side) {
+                const float centerX = (side == 0) ? -0.35f : 0.35f;
+                const float uMin = (side == 0) ? 0.0f : 0.5f;
+                const float uMax = (side == 0) ? 0.5f : 1.0f;
+                const std::uint32_t baseVertex = static_cast<std::uint32_t>(a_vertices.size());
+
+                for (int i = 0; i <= stacks; ++i) {
+                    float v = static_cast<float>(i) / static_cast<float>(stacks);
+                    float y = (0.5f - v) * 1.3f;
+
+                    float rx = 0.16f;
+                    float rz = 0.12f;
+                    float zOffset = 0.0f;
+                    if (y < 0.0f) {
+                        float t = -y / 0.65f;
+                        zOffset = t * 0.35f;
+                        rz = 0.12f + t * 0.15f;
+                    }
+
+                    for (int j = 0; j <= slices; ++j) {
+                        float segU = static_cast<float>(j) / static_cast<float>(slices);
+                        float u = uMin + segU * (uMax - uMin);
+                        float theta = segU * 2.0f * 3.14159265f;
+
+                        float x = centerX + rx * std::sin(theta);
+                        float z = zOffset + rz * std::cos(theta);
+
+                        MannequinVertex vert{};
+                        vert.pos = { x, y, z };
+
+                        DirectX::XMFLOAT3 n{ std::sin(theta), 0.15f, std::cos(theta) };
+                        float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+                        vert.norm = { n.x / len, n.y / len, n.z / len };
+
+                        vert.uv = { u, v };
+                        a_vertices.push_back(vert);
+                    }
+                }
+
+                for (int i = 0; i < stacks; ++i) {
+                    for (int j = 0; j < slices; ++j) {
+                        std::uint32_t first = baseVertex + i * (slices + 1) + j;
+                        std::uint32_t second = first + slices + 1;
+
+                        a_indices.push_back(first);
+                        a_indices.push_back(second);
+                        a_indices.push_back(first + 1);
+
+                        a_indices.push_back(second);
+                        a_indices.push_back(second + 1);
+                        a_indices.push_back(first + 1);
+                    }
+                }
+            }
+        }
     }
 
     MannequinRenderer& MannequinRenderer::Get()
@@ -200,7 +401,9 @@ namespace stm::render
         _context = a_context;
         _context->AddRef();
 
-        ResetCamera();
+        for (std::size_t i = 0; i < static_cast<std::size_t>(PreviewPart::kCount); ++i) {
+            ResetCamera(static_cast<PreviewPart>(i));
+        }
 
         if (!InitShaders()) return false;
         if (!InitMesh()) return false;
@@ -218,8 +421,9 @@ namespace stm::render
         if (_pixelShader) { _pixelShader->Release(); _pixelShader = nullptr; }
         if (_vertexShader) { _vertexShader->Release(); _vertexShader = nullptr; }
 
-        if (_vertexBuffer) { _vertexBuffer->Release(); _vertexBuffer = nullptr; }
-        if (_indexBuffer) { _indexBuffer->Release(); _indexBuffer = nullptr; }
+        for (auto& pm : _partMeshes) {
+            pm.Release();
+        }
 
         if (_samplerState) { _samplerState->Release(); _samplerState = nullptr; }
         if (_rasterState) { _rasterState->Release(); _rasterState = nullptr; }
@@ -298,6 +502,40 @@ namespace stm::render
         return InitMeshWithSex(-1);
     }
 
+    static bool CreateD3DBuffers(
+        ID3D11Device* a_device,
+        const std::vector<MannequinVertex>& a_vertices,
+        const std::vector<std::uint32_t>& a_indices,
+        ID3D11Buffer*& a_outVB,
+        ID3D11Buffer*& a_outIB)
+    {
+        if (!a_device || a_vertices.empty() || a_indices.empty()) return false;
+
+        D3D11_BUFFER_DESC vbd{};
+        vbd.Usage = D3D11_USAGE_IMMUTABLE;
+        vbd.ByteWidth = static_cast<UINT>(sizeof(MannequinVertex) * a_vertices.size());
+        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+        D3D11_SUBRESOURCE_DATA vData{};
+        vData.pSysMem = a_vertices.data();
+        if (FAILED(a_device->CreateBuffer(&vbd, &vData, &a_outVB))) return false;
+
+        D3D11_BUFFER_DESC ibd{};
+        ibd.Usage = D3D11_USAGE_IMMUTABLE;
+        ibd.ByteWidth = static_cast<UINT>(sizeof(std::uint32_t) * a_indices.size());
+        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+
+        D3D11_SUBRESOURCE_DATA iData{};
+        iData.pSysMem = a_indices.data();
+        if (FAILED(a_device->CreateBuffer(&ibd, &iData, &a_outIB))) {
+            a_outVB->Release();
+            a_outVB = nullptr;
+            return false;
+        }
+
+        return true;
+    }
+
     bool MannequinRenderer::InitMeshWithSex(int a_sex)
     {
         if (!_device) return false;
@@ -325,62 +563,67 @@ namespace stm::render
         }
 
         _currentSex = (targetSex == BodySex::kMale) ? 1 : 0;
+        const char* sexLabel = (targetSex == BodySex::kMale) ? "Male" : "Female";
 
-        std::vector<MannequinVertex> vertices;
-        std::vector<std::uint32_t> indices;
+        // 为全部 4 个部位分别加载或生成几何体 (Body, Face, Hands, Feet)
+        for (std::size_t i = 0; i < static_cast<std::size_t>(PreviewPart::kCount); ++i) {
+            auto part = static_cast<PreviewPart>(i);
+            std::vector<MannequinVertex> vertices;
+            std::vector<std::uint32_t>   indices;
+            std::string sourceInfo;
 
-        auto nifMesh = NifMeshExtractor::LoadDefaultBodyNif(targetSex);
-        if (nifMesh.success && !nifMesh.vertices.empty()) {
-            vertices = std::move(nifMesh.vertices);
-            indices = std::move(nifMesh.indices);
-            bool isFallback = (targetSex == BodySex::kMale && nifMesh.sourcePath.find("female") != std::string::npos);
-            if (isFallback) {
-                _meshSourceInfo = "NIF (" + nifMesh.shapeName + " [Female fallback])";
+            auto nifMesh = NifMeshExtractor::LoadDefaultPartNif(part, targetSex);
+            if (nifMesh.success && !nifMesh.vertices.empty()) {
+                vertices = std::move(nifMesh.vertices);
+                indices = std::move(nifMesh.indices);
+                bool isFallback = (targetSex == BodySex::kMale && nifMesh.sourcePath.find("female") != std::string::npos);
+                if (isFallback) {
+                    sourceInfo = "NIF (" + nifMesh.shapeName + " [Female fallback])";
+                } else {
+                    sourceInfo = std::string(sexLabel) + " NIF (" + nifMesh.shapeName + ")";
+                }
             } else {
-                _meshSourceInfo = std::string(targetSex == BodySex::kMale ? "Male NIF (" : "Female NIF (") + nifMesh.shapeName + ")";
+                switch (part) {
+                case PreviewPart::kFace:
+                    GenerateHeadMesh(vertices, indices);
+                    sourceInfo = std::string(sexLabel) + " Head Procedural";
+                    break;
+                case PreviewPart::kHands:
+                    GenerateHandsMesh(vertices, indices);
+                    sourceInfo = std::string(sexLabel) + " Hands Procedural";
+                    break;
+                case PreviewPart::kFeet:
+                    GenerateFeetMesh(vertices, indices);
+                    sourceInfo = std::string(sexLabel) + " Feet Procedural";
+                    break;
+                case PreviewPart::kBody:
+                default:
+                    GenerateBodyMesh(vertices, indices);
+                    sourceInfo = std::string(sexLabel) + " Body Procedural";
+                    break;
+                }
             }
-        } else {
-            GenerateMannequinMesh(vertices, indices);
-            _meshSourceInfo = std::string(targetSex == BodySex::kMale ? "Male Procedural" : "Female Procedural");
+
+            ID3D11Buffer* newVB = nullptr;
+            ID3D11Buffer* newIB = nullptr;
+            if (CreateD3DBuffers(_device, vertices, indices, newVB, newIB)) {
+                _partMeshes[i].Release();
+                _partMeshes[i].vertexBuffer = newVB;
+                _partMeshes[i].indexBuffer = newIB;
+                _partMeshes[i].indexCount = static_cast<std::uint32_t>(indices.size());
+                _partMeshes[i].meshSourceInfo = std::move(sourceInfo);
+            }
         }
-
-        ID3D11Buffer* newVB = nullptr;
-        ID3D11Buffer* newIB = nullptr;
-
-        D3D11_BUFFER_DESC vbd{};
-        vbd.Usage = D3D11_USAGE_IMMUTABLE;
-        vbd.ByteWidth = static_cast<UINT>(sizeof(MannequinVertex) * vertices.size());
-        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-
-        D3D11_SUBRESOURCE_DATA vData{};
-        vData.pSysMem = vertices.data();
-        if (FAILED(_device->CreateBuffer(&vbd, &vData, &newVB))) return false;
-
-        D3D11_BUFFER_DESC ibd{};
-        ibd.Usage = D3D11_USAGE_IMMUTABLE;
-        ibd.ByteWidth = static_cast<UINT>(sizeof(std::uint32_t) * indices.size());
-        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-
-        D3D11_SUBRESOURCE_DATA iData{};
-        iData.pSysMem = indices.data();
-        if (FAILED(_device->CreateBuffer(&ibd, &iData, &newIB))) {
-            newVB->Release();
-            return false;
-        }
-
-        if (_vertexBuffer) _vertexBuffer->Release();
-        if (_indexBuffer) _indexBuffer->Release();
-
-        _vertexBuffer = newVB;
-        _indexBuffer = newIB;
-        _indexCount = static_cast<std::uint32_t>(indices.size());
 
         return true;
     }
 
-    bool MannequinRenderer::LoadMeshFromNif(const std::string& a_nifPath)
+    bool MannequinRenderer::LoadMeshFromNif(PreviewPart a_part, const std::string& a_nifPath)
     {
         if (!_device) return false;
+
+        auto idx = static_cast<std::size_t>(a_part);
+        if (idx >= static_cast<std::size_t>(PreviewPart::kCount)) return false;
 
         auto nifMesh = NifMeshExtractor::LoadFromNif(a_nifPath);
         if (!nifMesh.success || nifMesh.vertices.empty()) {
@@ -389,37 +632,22 @@ namespace stm::render
 
         ID3D11Buffer* newVB = nullptr;
         ID3D11Buffer* newIB = nullptr;
-
-        D3D11_BUFFER_DESC vbd{};
-        vbd.Usage = D3D11_USAGE_IMMUTABLE;
-        vbd.ByteWidth = static_cast<UINT>(sizeof(MannequinVertex) * nifMesh.vertices.size());
-        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-
-        D3D11_SUBRESOURCE_DATA vData{};
-        vData.pSysMem = nifMesh.vertices.data();
-        if (FAILED(_device->CreateBuffer(&vbd, &vData, &newVB))) return false;
-
-        D3D11_BUFFER_DESC ibd{};
-        ibd.Usage = D3D11_USAGE_IMMUTABLE;
-        ibd.ByteWidth = static_cast<UINT>(sizeof(std::uint32_t) * nifMesh.indices.size());
-        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-
-        D3D11_SUBRESOURCE_DATA iData{};
-        iData.pSysMem = nifMesh.indices.data();
-        if (FAILED(_device->CreateBuffer(&ibd, &iData, &newIB))) {
-            newVB->Release();
+        if (!CreateD3DBuffers(_device, nifMesh.vertices, nifMesh.indices, newVB, newIB)) {
             return false;
         }
 
-        if (_vertexBuffer) _vertexBuffer->Release();
-        if (_indexBuffer) _indexBuffer->Release();
-
-        _vertexBuffer = newVB;
-        _indexBuffer = newIB;
-        _indexCount = static_cast<std::uint32_t>(nifMesh.indices.size());
-        _meshSourceInfo = "NIF (" + nifMesh.shapeName + ")";
+        _partMeshes[idx].Release();
+        _partMeshes[idx].vertexBuffer = newVB;
+        _partMeshes[idx].indexBuffer = newIB;
+        _partMeshes[idx].indexCount = static_cast<std::uint32_t>(nifMesh.indices.size());
+        _partMeshes[idx].meshSourceInfo = "NIF (" + nifMesh.shapeName + ")";
 
         return true;
+    }
+
+    bool MannequinRenderer::LoadMeshFromNif(const std::string& a_nifPath)
+    {
+        return LoadMeshFromNif(_currentPart, a_nifPath);
     }
 
     bool MannequinRenderer::InitBuffers()
@@ -521,32 +749,106 @@ namespace stm::render
 
     void MannequinRenderer::Rotate(float a_deltaYaw, float a_deltaPitch)
     {
-        _camera.yaw += a_deltaYaw;
-        _camera.pitch += a_deltaPitch;
+        auto& cam = GetCamera();
+        cam.yaw += a_deltaYaw;
+        cam.pitch += a_deltaPitch;
 
         // 限制俯仰角度防翻转
         constexpr float maxPitch = 1.35f;
-        _camera.pitch = std::clamp(_camera.pitch, -maxPitch, maxPitch);
+        cam.pitch = std::clamp(cam.pitch, -maxPitch, maxPitch);
     }
 
     void MannequinRenderer::Zoom(float a_deltaDistance)
     {
-        _camera.distance -= a_deltaDistance;
-        _camera.distance = std::clamp(_camera.distance, 0.8f, 5.0f);
+        auto& cam = GetCamera();
+        cam.distance -= a_deltaDistance;
+        cam.distance = std::clamp(cam.distance, 0.6f, 5.0f);
     }
 
     void MannequinRenderer::Pan(float a_deltaY)
     {
-        _camera.targetY += a_deltaY;
-        _camera.targetY = std::clamp(_camera.targetY, -1.0f, 1.0f);
+        auto& cam = GetCamera();
+        cam.targetY += a_deltaY;
+        cam.targetY = std::clamp(cam.targetY, -1.0f, 1.0f);
+    }
+
+    void MannequinRenderer::ResetCamera(PreviewPart a_part)
+    {
+        auto idx = static_cast<std::size_t>(a_part);
+        if (idx >= static_cast<std::size_t>(PreviewPart::kCount)) return;
+
+        _cameras[idx].yaw = 0.0f;
+        _cameras[idx].targetY = 0.0f;
+
+        switch (a_part) {
+        case PreviewPart::kFace:
+            _cameras[idx].distance = 1.6f;
+            _cameras[idx].pitch = 0.0f;
+            break;
+        case PreviewPart::kHands:
+            _cameras[idx].distance = 1.7f;
+            _cameras[idx].pitch = 0.25f;
+            break;
+        case PreviewPart::kFeet:
+            _cameras[idx].distance = 1.7f;
+            _cameras[idx].pitch = 0.35f;
+            break;
+        case PreviewPart::kBody:
+        default:
+            _cameras[idx].distance = 2.2f;
+            _cameras[idx].pitch = 0.0f;
+            break;
+        }
     }
 
     void MannequinRenderer::ResetCamera()
     {
-        _camera.yaw = 0.0f;
-        _camera.pitch = 0.0f;
-        _camera.distance = 2.2f;
-        _camera.targetY = 0.0f;
+        ResetCamera(_currentPart);
+    }
+
+    void MannequinRenderer::SetFrontView()
+    {
+        auto& cam = GetCamera();
+        cam.yaw = 0.0f;
+        cam.pitch = 0.0f;
+    }
+
+    void MannequinRenderer::SetBackView()
+    {
+        auto& cam = GetCamera();
+        cam.yaw = 3.14159265f;
+        cam.pitch = 0.0f;
+    }
+
+    void MannequinRenderer::SetCurrentPart(PreviewPart a_part)
+    {
+        if (static_cast<std::uint32_t>(a_part) < static_cast<std::uint32_t>(PreviewPart::kCount)) {
+            _currentPart = a_part;
+        }
+    }
+
+    CameraState& MannequinRenderer::GetCamera()
+    {
+        return GetCamera(_currentPart);
+    }
+
+    CameraState& MannequinRenderer::GetCamera(PreviewPart a_part)
+    {
+        auto idx = static_cast<std::size_t>(a_part);
+        if (idx >= static_cast<std::size_t>(PreviewPart::kCount)) idx = 0;
+        return _cameras[idx];
+    }
+
+    const std::string& MannequinRenderer::GetMeshSourceInfo() const
+    {
+        return GetMeshSourceInfo(_currentPart);
+    }
+
+    const std::string& MannequinRenderer::GetMeshSourceInfo(PreviewPart a_part) const
+    {
+        auto idx = static_cast<std::size_t>(a_part);
+        if (idx >= static_cast<std::size_t>(PreviewPart::kCount)) idx = 0;
+        return _partMeshes[idx].meshSourceInfo;
     }
 
     ID3D11ShaderResourceView* MannequinRenderer::RenderFrame(
@@ -556,8 +858,23 @@ namespace stm::render
         bool a_isBackArea,
         MannequinColor a_bodyColor)
     {
+        auto partIdx = static_cast<std::size_t>(_currentPart);
+        if (partIdx >= static_cast<std::size_t>(PreviewPart::kCount)) partIdx = 0;
+
+        auto* currentVB = _partMeshes[partIdx].vertexBuffer;
+        auto* currentIB = _partMeshes[partIdx].indexBuffer;
+        auto  currentIndexCount = _partMeshes[partIdx].indexCount;
+
+        // 若当前部位网格不可用，则安全回退至 Body 网格
+        if (!currentVB || !currentIB || currentIndexCount == 0) {
+            partIdx = static_cast<std::size_t>(PreviewPart::kBody);
+            currentVB = _partMeshes[partIdx].vertexBuffer;
+            currentIB = _partMeshes[partIdx].indexBuffer;
+            currentIndexCount = _partMeshes[partIdx].indexCount;
+        }
+
         if (!_initialized || !_context || !_renderTargetView || !_depthStencilView ||
-            !_vertexBuffer || !_indexBuffer || _indexCount == 0) {
+            !currentVB || !currentIB || currentIndexCount == 0) {
             return nullptr;
         }
 
@@ -631,13 +948,14 @@ namespace stm::render
         _context->ClearRenderTargetView(_renderTargetView, clearColor);
         _context->ClearDepthStencilView(_depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-        // 计算矩阵 (Orbit Arcball Camera)
-        float eyeX = _camera.distance * std::cos(_camera.pitch) * std::sin(_camera.yaw);
-        float eyeY = _camera.targetY + _camera.distance * std::sin(_camera.pitch);
-        float eyeZ = _camera.distance * std::cos(_camera.pitch) * std::cos(_camera.yaw);
+        // 计算当前部位独立相机的矩阵 (Orbit Arcball Camera)
+        const auto& cam = _cameras[partIdx];
+        float eyeX = cam.distance * std::cos(cam.pitch) * std::sin(cam.yaw);
+        float eyeY = cam.targetY + cam.distance * std::sin(cam.pitch);
+        float eyeZ = cam.distance * std::cos(cam.pitch) * std::cos(cam.yaw);
 
         DirectX::XMVECTOR eyePos = DirectX::XMVectorSet(eyeX, eyeY, eyeZ, 1.0f);
-        DirectX::XMVECTOR targetPos = DirectX::XMVectorSet(0.0f, _camera.targetY, 0.0f, 1.0f);
+        DirectX::XMVECTOR targetPos = DirectX::XMVectorSet(0.0f, cam.targetY, 0.0f, 1.0f);
         DirectX::XMVECTOR upDir = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 
         DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(eyePos, targetPos, upDir);
@@ -670,8 +988,8 @@ namespace stm::render
         UINT stride = sizeof(MannequinVertex);
         UINT offset = 0;
         _context->IASetInputLayout(_inputLayout);
-        _context->IASetVertexBuffers(0, 1, &_vertexBuffer, &stride, &offset);
-        _context->IASetIndexBuffer(_indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+        _context->IASetVertexBuffers(0, 1, &currentVB, &stride, &offset);
+        _context->IASetIndexBuffer(currentIB, DXGI_FORMAT_R32_UINT, 0);
         _context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         _context->VSSetShader(_vertexShader, nullptr, 0);
@@ -692,8 +1010,8 @@ namespace stm::render
         _context->OMSetBlendState(_blendState, blendFactor, 0xffffffff);
         _context->RSSetState(_rasterState);
 
-        // 绘制人偶
-        _context->DrawIndexed(_indexCount, 0, 0);
+        // 绘制选中的部位人偶网格
+        _context->DrawIndexed(currentIndexCount, 0, 0);
 
         // 绘制完成后解绑纹理，避免后续冲突
         _context->PSSetShaderResources(0, 1, nullSRV);

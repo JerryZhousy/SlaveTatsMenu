@@ -61,31 +61,110 @@ namespace stm::render
         return f;
     }
 
-    ExtractedMesh NifMeshExtractor::LoadDefaultBodyNif(BodySex a_sex)
+    ExtractedMesh NifMeshExtractor::LoadDefaultPartNif(PreviewPart a_part, BodySex a_sex)
     {
         std::vector<std::string> candidatePaths;
-        if (a_sex == BodySex::kMale) {
-            candidatePaths = {
-                "Data/Meshes/actors/character/character assets/malebody_1.nif",
-                "Data/Meshes/actors/character/character assets/malebody_0.nif",
-                "Data/meshes/actors/character/character assets/malebody_1.nif",
-                "Data/meshes/actors/character/character assets/malebody_0.nif",
-                "meshes/actors/character/character assets/malebody_1.nif",
-                "meshes/actors/character/character assets/malebody_0.nif",
-                "Data/Meshes/actors/character/character assets/femalebody_1.nif",
-                "Data/meshes/actors/character/character assets/femalebody_1.nif"
-            };
-        } else {
-            candidatePaths = {
-                "Data/Meshes/actors/character/character assets/femalebody_1.nif",
-                "Data/Meshes/actors/character/character assets/femalebody_0.nif",
-                "Data/meshes/actors/character/character assets/femalebody_1.nif",
-                "Data/meshes/actors/character/character assets/femalebody_0.nif",
-                "meshes/actors/character/character assets/femalebody_1.nif",
-                "meshes/actors/character/character assets/femalebody_0.nif",
-                "Data/Meshes/actors/character/character assets/malebody_1.nif",
-                "Data/meshes/actors/character/character assets/malebody_1.nif"
-            };
+        switch (a_part) {
+        case PreviewPart::kFace:
+            if (a_sex == BodySex::kMale) {
+                candidatePaths = {
+                    "Data/Meshes/actors/character/character assets/malehead.nif",
+                    "Data/meshes/actors/character/character assets/malehead.nif",
+                    "meshes/actors/character/character assets/malehead.nif",
+                    "Data/Meshes/actors/character/character assets/femalehead.nif",
+                    "Data/meshes/actors/character/character assets/femalehead.nif",
+                    "meshes/actors/character/character assets/femalehead.nif"
+                };
+            } else {
+                candidatePaths = {
+                    "Data/Meshes/actors/character/character assets/femalehead.nif",
+                    "Data/meshes/actors/character/character assets/femalehead.nif",
+                    "meshes/actors/character/character assets/femalehead.nif",
+                    "Data/Meshes/actors/character/character assets/malehead.nif",
+                    "Data/meshes/actors/character/character assets/malehead.nif",
+                    "meshes/actors/character/character assets/malehead.nif"
+                };
+            }
+            break;
+
+        case PreviewPart::kHands:
+            if (a_sex == BodySex::kMale) {
+                candidatePaths = {
+                    "Data/Meshes/actors/character/character assets/malehands_1.nif",
+                    "Data/Meshes/actors/character/character assets/malehands_0.nif",
+                    "Data/meshes/actors/character/character assets/malehands_1.nif",
+                    "Data/meshes/actors/character/character assets/malehands_0.nif",
+                    "meshes/actors/character/character assets/malehands_1.nif",
+                    "meshes/actors/character/character assets/malehands_0.nif",
+                    "Data/Meshes/actors/character/character assets/femalehands_1.nif",
+                    "Data/meshes/actors/character/character assets/femalehands_1.nif"
+                };
+            } else {
+                candidatePaths = {
+                    "Data/Meshes/actors/character/character assets/femalehands_1.nif",
+                    "Data/Meshes/actors/character/character assets/femalehands_0.nif",
+                    "Data/meshes/actors/character/character assets/femalehands_1.nif",
+                    "Data/meshes/actors/character/character assets/femalehands_0.nif",
+                    "meshes/actors/character/character assets/femalehands_1.nif",
+                    "meshes/actors/character/character assets/femalehands_0.nif",
+                    "Data/Meshes/actors/character/character assets/malehands_1.nif",
+                    "Data/meshes/actors/character/character assets/malehands_1.nif"
+                };
+            }
+            break;
+
+        case PreviewPart::kFeet:
+            if (a_sex == BodySex::kMale) {
+                candidatePaths = {
+                    "Data/Meshes/actors/character/character assets/malefeet_1.nif",
+                    "Data/Meshes/actors/character/character assets/malefeet_0.nif",
+                    "Data/meshes/actors/character/character assets/malefeet_1.nif",
+                    "Data/meshes/actors/character/character assets/malefeet_0.nif",
+                    "meshes/actors/character/character assets/malefeet_1.nif",
+                    "meshes/actors/character/character assets/malefeet_0.nif",
+                    "Data/Meshes/actors/character/character assets/femalefeet_1.nif",
+                    "Data/meshes/actors/character/character assets/femalefeet_1.nif"
+                };
+            } else {
+                candidatePaths = {
+                    "Data/Meshes/actors/character/character assets/femalefeet_1.nif",
+                    "Data/Meshes/actors/character/character assets/femalefeet_0.nif",
+                    "Data/meshes/actors/character/character assets/femalefeet_1.nif",
+                    "Data/meshes/actors/character/character assets/femalefeet_0.nif",
+                    "meshes/actors/character/character assets/femalefeet_1.nif",
+                    "meshes/actors/character/character assets/femalefeet_0.nif",
+                    "Data/Meshes/actors/character/character assets/malefeet_1.nif",
+                    "Data/meshes/actors/character/character assets/malefeet_1.nif"
+                };
+            }
+            break;
+
+        case PreviewPart::kBody:
+        default:
+            if (a_sex == BodySex::kMale) {
+                candidatePaths = {
+                    "Data/Meshes/actors/character/character assets/malebody_1.nif",
+                    "Data/Meshes/actors/character/character assets/malebody_0.nif",
+                    "Data/meshes/actors/character/character assets/malebody_1.nif",
+                    "Data/meshes/actors/character/character assets/malebody_0.nif",
+                    "meshes/actors/character/character assets/malebody_1.nif",
+                    "meshes/actors/character/character assets/malebody_0.nif",
+                    "Data/Meshes/actors/character/character assets/femalebody_1.nif",
+                    "Data/meshes/actors/character/character assets/femalebody_1.nif"
+                };
+            } else {
+                candidatePaths = {
+                    "Data/Meshes/actors/character/character assets/femalebody_1.nif",
+                    "Data/Meshes/actors/character/character assets/femalebody_0.nif",
+                    "Data/meshes/actors/character/character assets/femalebody_1.nif",
+                    "Data/meshes/actors/character/character assets/femalebody_0.nif",
+                    "meshes/actors/character/character assets/femalebody_1.nif",
+                    "meshes/actors/character/character assets/femalebody_0.nif",
+                    "Data/Meshes/actors/character/character assets/malebody_1.nif",
+                    "Data/meshes/actors/character/character assets/malebody_1.nif"
+                };
+            }
+            break;
         }
 
         std::error_code ec;
@@ -203,7 +282,8 @@ namespace stm::render
         }
 
         if (targetPartitionBlock != -1) {
-            result.shapeName = "Body (NiSkinPartition)";
+            fs::path p(a_filePath);
+            result.shapeName = p.stem().string() + " (NiSkinPartition)";
             const std::uint8_t* pData = &buffer[blockOffsets[targetPartitionBlock]];
             std::size_t pSize = blockSizes[targetPartitionBlock];
 
@@ -246,6 +326,9 @@ namespace stm::render
                     if (numTri > 0 && numVert > 0 && p < bSize) {
                         if (nameIdx >= 0 && nameIdx < static_cast<std::int32_t>(strings.size())) {
                             result.shapeName = strings[nameIdx];
+                        } else {
+                            fs::path fp(a_filePath);
+                            result.shapeName = fp.stem().string() + " (BSTriShape)";
                         }
                         if (ParseDirectTriShape(&bData[p], bSize - p, numTri, numVert, vDesc, result.vertices, result.indices)) {
                             result.success = true;
@@ -287,7 +370,7 @@ namespace stm::render
         a_outVerts.clear();
         a_outVerts.reserve(numVertices);
 
-        // 寻找中心包围盒以做归一化
+        // 寻找中心包围盒以做自适应居中与缩放
         float minX = 1e9f, maxX = -1e9f;
         float minY = 1e9f, maxY = -1e9f;
         float minZ = 1e9f, maxZ = -1e9f;
@@ -299,16 +382,32 @@ namespace stm::render
             float y = *reinterpret_cast<const float*>(v + 4);
             float z = *reinterpret_cast<const float*>(v + 8);
 
-            minX = std::min(minX, x); maxX = std::max(maxX, x);
-            minY = std::min(minY, y); maxY = std::max(maxY, y);
-            minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+            if (!std::isnan(x) && !std::isinf(x) &&
+                !std::isnan(y) && !std::isinf(y) &&
+                !std::isnan(z) && !std::isinf(z)) {
+                minX = std::min(minX, x); maxX = std::max(maxX, x);
+                minY = std::min(minY, y); maxY = std::max(maxY, y);
+                minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+            }
         }
 
-        // 老滚世界的单位通常人体高度约 120 单位 (Z: 0 ~ 125)
-        // 计算身体中心点 (躯干中心约在 Z 的中上位)
-        float centerY = (minZ + maxZ) * 0.55f;
-        float sizeY = std::max(1.0f, maxZ - minZ);
-        float scale = 2.0f / sizeY; // 缩放到合适视口高度
+        if (minX > maxX || minY > maxY || minZ > maxZ) {
+            minX = -1.0f; maxX = 1.0f;
+            minY = -1.0f; maxY = 1.0f;
+            minZ = -1.0f; maxZ = 1.0f;
+        }
+
+        // 老滚世界的单位：X向右, Y向前, Z向上
+        // 计算几何体在各轴的中心点，使得无论是身体、头部、双手还是双脚都能居中在视口原点 (0, 0, 0)
+        float centerX = (minX + maxX) * 0.5f;
+        float centerY_nif = (minY + maxY) * 0.5f;
+        float centerZ = (minZ + maxZ) * 0.5f;
+
+        float dimX = std::max(0.1f, maxX - minX);
+        float dimY = std::max(0.1f, maxY - minY);
+        float dimZ = std::max(0.1f, maxZ - minZ);
+        float maxDim = std::max({ dimX, dimY, dimZ });
+        float scale = 1.9f / maxDim; // 缩放到合适视口尺度
 
         // 判断 UV 偏移：Skyrim SE (vertexStride >= 28) 包含 bitangent/unusedW (4 字节)，UV 在 offset 16
         // 若较短 (vertexStride < 28) 则 UV 在 offset 12
@@ -331,31 +430,35 @@ namespace stm::render
             if (std::isnan(u) || std::isinf(u)) u = 0.5f;
             if (std::isnan(vCoord) || std::isinf(vCoord)) vCoord = 0.5f;
 
+            // 异常顶点坐标防溢出
+            if (std::isnan(nx) || std::isinf(nx)) nx = centerX;
+            if (std::isnan(ny) || std::isinf(ny)) ny = centerY_nif;
+            if (std::isnan(nz) || std::isinf(nz)) nz = centerZ;
+
             MannequinVertex vert{};
-            // 坐标轴变换：老滚 (X右, Y前, Z上) -> 视口 (X右, Y上, Z前)
-            vert.pos.x = nx * scale;
-            vert.pos.y = (nz - centerY) * scale;
-            vert.pos.z = -ny * scale;
+            // 坐标轴变换并自适应居中：老滚 (X右, Y前, Z上) -> 视口 (X右, Y上, Z前)
+            vert.pos.x = (nx - centerX) * scale;
+            vert.pos.y = (nz - centerZ) * scale;
+            vert.pos.z = -(ny - centerY_nif) * scale;
 
             // 解析顶点法线 (ByteVector3 位于 offset 20，若不可用则用向外辐射法线兜底)
             if (vertexStride >= 24) {
                 float normX = (static_cast<float>(v[20]) / 127.5f) - 1.0f;
                 float normY = (static_cast<float>(v[21]) / 127.5f) - 1.0f;
                 float normZ = (static_cast<float>(v[22]) / 127.5f) - 1.0f;
-                // 老滚 (X, Y, Z) -> 视口 (X, Z, -Y)
                 vert.norm.x = normX;
                 vert.norm.y = normZ;
                 vert.norm.z = -normY;
                 float nlen = std::sqrt(vert.norm.x * vert.norm.x + vert.norm.y * vert.norm.y + vert.norm.z * vert.norm.z);
-                if (nlen > 0.001f) {
+                if (nlen > 0.001f && !std::isnan(nlen)) {
                     vert.norm.x /= nlen;
                     vert.norm.y /= nlen;
                     vert.norm.z /= nlen;
                 } else {
-                    vert.norm = { nx, 0.2f, -ny };
+                    vert.norm = { vert.pos.x, 0.2f, vert.pos.z };
                 }
             } else {
-                vert.norm = { nx, 0.2f, -ny };
+                vert.norm = { vert.pos.x, 0.2f, vert.pos.z };
             }
 
             vert.uv.x = u;
@@ -460,7 +563,7 @@ namespace stm::render
         std::size_t stride = vertexBytesTotal / a_numVertices;
         if (stride < 16) return false;
 
-        // 计算中心与包围盒
+        // 计算中心与包围盒做自适应居中与缩放
         float minX = 1e9f, maxX = -1e9f;
         float minY = 1e9f, maxY = -1e9f;
         float minZ = 1e9f, maxZ = -1e9f;
@@ -472,14 +575,30 @@ namespace stm::render
             float y = *reinterpret_cast<const float*>(v + 4);
             float z = *reinterpret_cast<const float*>(v + 8);
 
-            minX = std::min(minX, x); maxX = std::max(maxX, x);
-            minY = std::min(minY, y); maxY = std::max(maxY, y);
-            minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+            if (!std::isnan(x) && !std::isinf(x) &&
+                !std::isnan(y) && !std::isinf(y) &&
+                !std::isnan(z) && !std::isinf(z)) {
+                minX = std::min(minX, x); maxX = std::max(maxX, x);
+                minY = std::min(minY, y); maxY = std::max(maxY, y);
+                minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+            }
         }
 
-        float centerY = (minZ + maxZ) * 0.5f;
-        float sizeY = std::max(1.0f, maxZ - minZ);
-        float scale = 2.0f / sizeY;
+        if (minX > maxX || minY > maxY || minZ > maxZ) {
+            minX = -1.0f; maxX = 1.0f;
+            minY = -1.0f; maxY = 1.0f;
+            minZ = -1.0f; maxZ = 1.0f;
+        }
+
+        float centerX = (minX + maxX) * 0.5f;
+        float centerY_nif = (minY + maxY) * 0.5f;
+        float centerZ = (minZ + maxZ) * 0.5f;
+
+        float dimX = std::max(0.1f, maxX - minX);
+        float dimY = std::max(0.1f, maxY - minY);
+        float dimZ = std::max(0.1f, maxZ - minZ);
+        float maxDim = std::max({ dimX, dimY, dimZ });
+        float scale = 1.9f / maxDim;
 
         const std::size_t uvOffset = (stride >= 28) ? 16 : 12;
 
@@ -503,17 +622,23 @@ namespace stm::render
                 if (std::isnan(vCoord) || std::isinf(vCoord)) vCoord = 0.5f;
             }
 
+            if (std::isnan(x) || std::isinf(x)) x = centerX;
+            if (std::isnan(y) || std::isinf(y)) y = centerY_nif;
+            if (std::isnan(z) || std::isinf(z)) z = centerZ;
+
             MannequinVertex vert{};
-            vert.pos = { x * scale, (z - centerY) * scale, -y * scale };
-            vert.norm = { x, 0.1f, -y };
+            vert.pos = { (x - centerX) * scale, (z - centerZ) * scale, -(y - centerY_nif) * scale };
+            vert.norm = { vert.pos.x, 0.2f, vert.pos.z };
             if (stride >= 24) {
                 float normX = (static_cast<float>(v[20]) / 127.5f) - 1.0f;
                 float normY = (static_cast<float>(v[21]) / 127.5f) - 1.0f;
                 float normZ = (static_cast<float>(v[22]) / 127.5f) - 1.0f;
                 vert.norm = { normX, normZ, -normY };
                 float nlen = std::sqrt(vert.norm.x * vert.norm.x + vert.norm.y * vert.norm.y + vert.norm.z * vert.norm.z);
-                if (nlen > 0.001f) {
+                if (nlen > 0.001f && !std::isnan(nlen)) {
                     vert.norm.x /= nlen; vert.norm.y /= nlen; vert.norm.z /= nlen;
+                } else {
+                    vert.norm = { vert.pos.x, 0.2f, vert.pos.z };
                 }
             }
             vert.uv = { u, vCoord };

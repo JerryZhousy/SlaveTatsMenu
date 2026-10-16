@@ -24,6 +24,31 @@ namespace stm::render
         float targetY = 0.0f;   // 观察目标 Y 轴偏移 (例如上下观察胸/背/腿)
     };
 
+    enum class PreviewPart : std::uint32_t
+    {
+        kBody = 0,
+        kFace = 1,
+        kHands = 2,
+        kFeet = 3,
+        kCount = 4
+    };
+
+    struct PartMeshBuffer
+    {
+        ID3D11Buffer* vertexBuffer = nullptr;
+        ID3D11Buffer* indexBuffer = nullptr;
+        std::uint32_t indexCount = 0;
+        std::string   meshSourceInfo;
+
+        void Release()
+        {
+            if (vertexBuffer) { vertexBuffer->Release(); vertexBuffer = nullptr; }
+            if (indexBuffer) { indexBuffer->Release(); indexBuffer = nullptr; }
+            indexCount = 0;
+            meshSourceInfo.clear();
+        }
+    };
+
     class MannequinRenderer
     {
     public:
@@ -44,23 +69,31 @@ namespace stm::render
             MannequinColor a_bodyColor = MannequinColor::kTransparent
         );
 
-        // 交互控制
+        // 部位切换与读取
+        void SetCurrentPart(PreviewPart a_part);
+        PreviewPart GetCurrentPart() const { return _currentPart; }
+
+        // 交互控制 (针对当前活跃部位的独立相机)
         void Rotate(float a_deltaYaw, float a_deltaPitch);
         void Zoom(float a_deltaDistance);
         void Pan(float a_deltaY);
         void ResetCamera();
-        void SetFrontView() { _camera.yaw = 0.0f; _camera.pitch = 0.0f; }
-        void SetBackView()  { _camera.yaw = 3.14159265f; _camera.pitch = 0.0f; }
+        void ResetCamera(PreviewPart a_part);
+        void SetFrontView();
+        void SetBackView();
 
         // 状态读取
-        CameraState& GetCamera() { return _camera; }
+        CameraState& GetCamera();
+        CameraState& GetCamera(PreviewPart a_part);
         bool IsInitialized() const { return _initialized; }
         std::uint32_t GetWidth() const { return _width; }
         std::uint32_t GetHeight() const { return _height; }
-        const std::string& GetMeshSourceInfo() const { return _meshSourceInfo; }
+        const std::string& GetMeshSourceInfo() const;
+        const std::string& GetMeshSourceInfo(PreviewPart a_part) const;
         int GetCurrentSex() const { return _currentSex; }
 
         // 支持重载指定的 NIF 网格与根据主角性别重载
+        bool LoadMeshFromNif(PreviewPart a_part, const std::string& a_nifPath);
         bool LoadMeshFromNif(const std::string& a_nifPath);
         bool ReloadForPlayerSex();
         bool InitMeshWithSex(int a_sex);
@@ -69,8 +102,8 @@ namespace stm::render
         MannequinRenderer() = default;
         ~MannequinRenderer() { Shutdown(); }
 
-        std::string _meshSourceInfo = "Procedural";
-        int         _currentSex = 0;
+        int _currentSex = 0;
+        PreviewPart _currentPart = PreviewPart::kBody;
 
         bool InitShaders();
         bool InitMesh();
@@ -89,12 +122,12 @@ namespace stm::render
         ID3D11ShaderResourceView* _shaderResourceView = nullptr;
 
         // 深度测试缓冲
-        ID3D11Texture2D*        _depthStencilTexture = nullptr;
-        ID3D11DepthStencilView* _depthStencilView = nullptr;
+        ID3D11Texture2D*         _depthStencilTexture = nullptr;
+        ID3D11DepthStencilView*  _depthStencilView = nullptr;
         ID3D11DepthStencilState* _depthStencilState = nullptr;
 
         // 混合状态（半透明玻璃混合）
-        ID3D11BlendState* _blendState = nullptr;
+        ID3D11BlendState*      _blendState = nullptr;
         ID3D11RasterizerState* _rasterState = nullptr;
         ID3D11SamplerState*    _samplerState = nullptr;
 
@@ -104,11 +137,8 @@ namespace stm::render
         ID3D11InputLayout*  _inputLayout = nullptr;
         ID3D11Buffer*       _constantBuffer = nullptr;
 
-        // 模特网格缓冲
-        ID3D11Buffer* _vertexBuffer = nullptr;
-        ID3D11Buffer* _indexBuffer = nullptr;
-        std::uint32_t _indexCount = 0;
-
-        CameraState _camera;
+        // 4个部位的网格缓冲与独立相机状态 (Body, Face, Hands, Feet)
+        PartMeshBuffer _partMeshes[static_cast<std::size_t>(PreviewPart::kCount)];
+        CameraState    _cameras[static_cast<std::size_t>(PreviewPart::kCount)];
     };
 }

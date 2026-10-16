@@ -175,6 +175,27 @@ namespace stm::ui
                    containsCaseInsensitive(a_entry.texture, "back");
         }
 
+        render::PreviewPart AreaToPreviewPart(std::string_view a_area)
+        {
+            if (a_area.empty()) return render::PreviewPart::kBody;
+
+            std::string lower(a_area);
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+
+            if (lower.find("face") != std::string::npos || lower.find("head") != std::string::npos) {
+                return render::PreviewPart::kFace;
+            }
+            if (lower.find("hand") != std::string::npos) {
+                return render::PreviewPart::kHands;
+            }
+            if (lower.find("feet") != std::string::npos || lower.find("foot") != std::string::npos) {
+                return render::PreviewPart::kFeet;
+            }
+            return render::PreviewPart::kBody;
+        }
+
         void SeedEditorFrom(const data::TattooEntry& a_entry)
         {
             auto& state = UiState::Get();
@@ -190,6 +211,9 @@ namespace stm::ui
             state.alpha = a_entry.defaultAlpha;
 
             UpdatePreview(a_entry.texture);
+
+            // 根据纹身所属区域自动切换 3D 模特到对应的身体/面部/手部/脚部
+            render::MannequinRenderer::Get().SetCurrentPart(AreaToPreviewPart(a_entry.area));
 
             if (IsBackTattoo(a_entry)) {
                 render::MannequinRenderer::Get().SetBackView();
@@ -366,6 +390,9 @@ namespace stm::ui
                     state.hasSelection = false;
                     UpdatePreview("");
                     data::SlotSnapshot::Get().Invalidate();
+                    if (i >= 1 && i <= 4) {
+                        render::MannequinRenderer::Get().SetCurrentPart(AreaToPreviewPart(kAreaIds[i]));
+                    }
                 }
             }
         }
@@ -549,6 +576,9 @@ namespace stm::ui
                         state.targetSlot = slot.slot;
                         UpdatePreview(state.selected.texture);
 
+                        // 自动同步部位与后背视角
+                        render::MannequinRenderer::Get().SetCurrentPart(AreaToPreviewPart(state.selected.area));
+
                         if (IsBackTattoo(state.selected)) {
                             render::MannequinRenderer::Get().SetBackView();
                         }
@@ -684,7 +714,26 @@ namespace stm::ui
                                 ImGui::SameLine();
                                 ImGui::Checkbox(L("自转##cam_spin", "Spin##cam_spin"), &s_autoSpin);
 
-                                ImGui::TextDisabled("%s: %s", L("身形", "Body"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
+                                auto curPart = render::MannequinRenderer::Get().GetCurrentPart();
+                                ImGui::Text("%s:", L("部位", "Part"));
+                                ImGui::SameLine();
+                                if (ImGui::RadioButton(L("身体##part_b", "Body##part_b"), curPart == render::PreviewPart::kBody)) {
+                                    render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kBody);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::RadioButton(L("面部/头部##part_f", "Face/Head##part_f"), curPart == render::PreviewPart::kFace)) {
+                                    render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kFace);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::RadioButton(L("手部##part_h", "Hands##part_h"), curPart == render::PreviewPart::kHands)) {
+                                    render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kHands);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::RadioButton(L("脚部##part_ft", "Feet##part_ft"), curPart == render::PreviewPart::kFeet)) {
+                                    render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kFeet);
+                                }
+
+                                ImGui::TextDisabled("%s: %s", L("模型", "Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
 
                                 int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
                                 if (ImGui::RadioButton(L("女##mesh_fem", "Female##mesh_fem"), sexChoice == 0)) {
