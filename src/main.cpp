@@ -94,7 +94,7 @@ namespace
 
 extern "C" DLLEXPORT constinit auto SKSEPlugin_Version = []() {
     SKSE::PluginVersionData v;
-    v.PluginVersion(REL::Version{ 2, 0, 0, 0 });
+    v.PluginVersion(REL::Version{ 1, 0, 0, 0 });
     v.PluginName("SlaveTatsMenu");
     v.AuthorName("4x9M133");
     v.UsesAddressLibrary();
@@ -106,7 +106,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface* a
 {
     a_info->infoVersion = SKSE::PluginInfo::kVersion;
     a_info->name = "SlaveTatsMenu";
-    a_info->version = 2;
+    a_info->version = 1;
 
     if (a_skse->IsEditor()) {
         return false;
@@ -126,7 +126,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 
     stm::LoadThreadId() = stm::ThisThreadId();
 
-    SKSE::log::info("SlaveTatsMenu {} loaded (game {}, load thread {})", "2.0.0", a_skse->RuntimeVersion().string(), stm::LoadThreadId());
+    SKSE::log::info("SlaveTatsMenu {} loaded (game {}, load thread {})", "1.0.0", a_skse->RuntimeVersion().string(), stm::LoadThreadId());
 
     const auto messaging = SKSE::GetMessagingInterface();
     if (!messaging) {
