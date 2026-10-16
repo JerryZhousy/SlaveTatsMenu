@@ -393,15 +393,16 @@ namespace stm::render
             if (triOffset >= a_size) break;
             uint8_t hasWeights = a_data[triOffset++];
             if (hasWeights) {
-                triOffset += partVerts * partWeights * 4;
+                if (triOffset + static_cast<std::size_t>(partVerts) * partWeights * 4 > a_size) break;
+                triOffset += static_cast<std::size_t>(partVerts) * partWeights * 4;
             }
 
             if (triOffset >= a_size) break;
             uint8_t hasFaces = a_data[triOffset++];
             if (hasFaces && partStrips == 0) {
-                if (triOffset + partTriangles * 6 > a_size) break;
+                if (triOffset + static_cast<std::size_t>(partTriangles) * 6 > a_size) break;
                 const auto* triList = reinterpret_cast<const uint16_t*>(&a_data[triOffset]);
-                triOffset += partTriangles * 3 * 2;
+                triOffset += static_cast<std::size_t>(partTriangles) * 3 * 2;
 
                 for (std::uint16_t t = 0; t < partTriangles; ++t) {
                     uint16_t i0 = triList[t * 3 + 0];
@@ -423,13 +424,14 @@ namespace stm::render
             if (triOffset < a_size) {
                 uint8_t hasBIdx = a_data[triOffset++];
                 if (hasBIdx) {
-                    triOffset += partVerts * partWeights;
+                    if (triOffset + static_cast<std::size_t>(partVerts) * partWeights > a_size) break;
+                    triOffset += static_cast<std::size_t>(partVerts) * partWeights;
                 }
             }
 
-            // Skyrim SE (bsVersion == 100): 跳过 partition 尾部附加字段
+            // Skyrim SE / AE (bsVersion >= 100): 跳过 partition 尾部附加字段
             // LOD Level (1 byte) + Global VB (1 byte) + Vertex Desc (8 bytes) + Triangles Copy (partTriangles * 6 bytes)
-            if (a_bsVersion == 100) {
+            if (a_bsVersion >= 100) {
                 std::size_t sseFooter = 1 + 1 + 8 + static_cast<std::size_t>(partTriangles) * 6;
                 if (triOffset + sseFooter <= a_size) {
                     triOffset += sseFooter;

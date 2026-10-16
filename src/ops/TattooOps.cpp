@@ -181,9 +181,15 @@ namespace stm::ops
                 const auto occupiedHandle = ng::GetAppliedInSlot(actor, a_request.tattoo.area, a_request.targetSlot);
                 bool proceedWithSlot = true;
                 if (occupiedHandle > 0) {
-                    if (Config::Get().slotPolicy == SlotPolicy::kOverwrite) {
+                    const jc::ObjId obj{ occupiedHandle };
+                    const bool isExternal = jc::MapGetStr(obj, "name").empty();
+                    if (isExternal) {
+                        SKSE::log::warn("Ops: slot {} in {} is an external overlay, refusing to overwrite to protect mod data; falling back to auto allocation",
+                            a_request.targetSlot, a_request.tattoo.area);
+                        proceedWithSlot = false;
+                    } else if (Config::Get().slotPolicy == SlotPolicy::kOverwrite) {
                         SKSE::log::info("Ops: slot {} occupied in {}, removing existing per overwrite policy", a_request.targetSlot, a_request.tattoo.area);
-                        ng::RemoveFromSlot(actor, a_request.tattoo.area, a_request.targetSlot, false);
+                        ng::RemoveFromSlot(actor, a_request.tattoo.area, a_request.targetSlot, true);
                     } else {
                         SKSE::log::info("Ops: slot {} occupied in {}, falling back to auto allocation per autofree policy", a_request.targetSlot, a_request.tattoo.area);
                         proceedWithSlot = false;

@@ -308,4 +308,14 @@ namespace stm::data
 
         return _qSections;
     }
+
+    const TattooEntry* TattooDatabase::Find(std::string_view a_section, std::string_view a_name) const
+    {
+        for (const auto& entry : _all) {
+            if (entry.section == a_section && entry.name == a_name) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    }
 }

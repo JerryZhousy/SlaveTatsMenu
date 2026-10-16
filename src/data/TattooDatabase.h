@@ -62,6 +62,9 @@ namespace stm::data
         const std::vector<TattooEntry>& Query(std::string_view a_area, std::string_view a_section, std::string_view a_keyword);
         const std::vector<SectionInfo>& QuerySections(std::string_view a_area, std::string_view a_keyword);
 
+        // Find a specific entry by section and name from the full database
+        const TattooEntry* Find(std::string_view a_section, std::string_view a_name) const;
+
     private:
         TattooDatabase() = default;
 

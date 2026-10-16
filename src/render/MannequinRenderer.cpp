@@ -556,7 +556,8 @@ namespace stm::render
         bool a_isBackArea,
         MannequinColor a_bodyColor)
     {
-        if (!_initialized || !_context || !_renderTargetView || !_depthStencilView) {
+        if (!_initialized || !_context || !_renderTargetView || !_depthStencilView ||
+            !_vertexBuffer || !_indexBuffer || _indexCount == 0) {
             return nullptr;
         }
 
@@ -564,7 +565,7 @@ namespace stm::render
         ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
         _context->PSSetShaderResources(0, 1, nullSRV);
 
-        // 备份原有渲染状态
+        // 备份原有渲染状态与管线绑定，确保对游戏与后续渲染零污染
         ID3D11RenderTargetView* prevRTV = nullptr;
         ID3D11DepthStencilView* prevDSV = nullptr;
         _context->OMGetRenderTargets(1, &prevRTV, &prevDSV);
@@ -572,6 +573,48 @@ namespace stm::render
         D3D11_VIEWPORT prevViewport{};
         UINT numViewports = 1;
         _context->RSGetViewports(&numViewports, &prevViewport);
+
+        ID3D11RasterizerState* prevRasterState = nullptr;
+        _context->RSGetState(&prevRasterState);
+
+        ID3D11BlendState* prevBlendState = nullptr;
+        FLOAT prevBlendFactor[4] = { 0 };
+        UINT prevSampleMask = 0xffffffff;
+        _context->OMGetBlendState(&prevBlendState, prevBlendFactor, &prevSampleMask);
+
+        ID3D11DepthStencilState* prevDepthState = nullptr;
+        UINT prevStencilRef = 0;
+        _context->OMGetDepthStencilState(&prevDepthState, &prevStencilRef);
+
+        ID3D11InputLayout* prevInputLayout = nullptr;
+        _context->IAGetInputLayout(&prevInputLayout);
+
+        D3D11_PRIMITIVE_TOPOLOGY prevTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+        _context->IAGetPrimitiveTopology(&prevTopology);
+
+        ID3D11VertexShader* prevVS = nullptr;
+        _context->VSGetShader(&prevVS, nullptr, nullptr);
+
+        ID3D11PixelShader* prevPS = nullptr;
+        _context->PSGetShader(&prevPS, nullptr, nullptr);
+
+        ID3D11SamplerState* prevSampler = nullptr;
+        _context->PSGetSamplers(0, 1, &prevSampler);
+
+        ID3D11Buffer* prevVB = nullptr;
+        UINT prevStride = 0, prevOffset = 0;
+        _context->IAGetVertexBuffers(0, 1, &prevVB, &prevStride, &prevOffset);
+
+        ID3D11Buffer* prevIB = nullptr;
+        DXGI_FORMAT prevIndexFormat = DXGI_FORMAT_UNKNOWN;
+        UINT prevIndexOffset = 0;
+        _context->IAGetIndexBuffer(&prevIB, &prevIndexFormat, &prevIndexOffset);
+
+        ID3D11Buffer* prevVSConstant = nullptr;
+        _context->VSGetConstantBuffers(0, 1, &prevVSConstant);
+
+        ID3D11Buffer* prevPSConstant = nullptr;
+        _context->PSGetConstantBuffers(0, 1, &prevPSConstant);
 
         // 设置视口与目标
         D3D11_VIEWPORT vp{};
@@ -658,8 +701,33 @@ namespace stm::render
         // 还原外部状态
         _context->RSSetViewports(1, &prevViewport);
         _context->OMSetRenderTargets(1, &prevRTV, prevDSV);
+        _context->RSSetState(prevRasterState);
+        _context->OMSetBlendState(prevBlendState, prevBlendFactor, prevSampleMask);
+        _context->OMSetDepthStencilState(prevDepthState, prevStencilRef);
+        _context->IASetInputLayout(prevInputLayout);
+        _context->IASetPrimitiveTopology(prevTopology);
+        _context->IASetVertexBuffers(0, 1, &prevVB, &prevStride, &prevOffset);
+        _context->IASetIndexBuffer(prevIB, prevIndexFormat, prevIndexOffset);
+        _context->VSSetShader(prevVS, nullptr, 0);
+        _context->VSSetConstantBuffers(0, 1, &prevVSConstant);
+        _context->PSSetShader(prevPS, nullptr, 0);
+        _context->PSSetConstantBuffers(0, 1, &prevPSConstant);
+        _context->PSSetSamplers(0, 1, &prevSampler);
+
+        // 释放临时引用的 COM 对象
         if (prevRTV) prevRTV->Release();
         if (prevDSV) prevDSV->Release();
+        if (prevRasterState) prevRasterState->Release();
+        if (prevBlendState) prevBlendState->Release();
+        if (prevDepthState) prevDepthState->Release();
+        if (prevInputLayout) prevInputLayout->Release();
+        if (prevVS) prevVS->Release();
+        if (prevPS) prevPS->Release();
+        if (prevSampler) prevSampler->Release();
+        if (prevVB) prevVB->Release();
+        if (prevIB) prevIB->Release();
+        if (prevVSConstant) prevVSConstant->Release();
+        if (prevPSConstant) prevPSConstant->Release();
 
         return _shaderResourceView;
     }

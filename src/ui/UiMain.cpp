@@ -32,17 +32,23 @@ namespace stm::ui
 
         struct FontScaleScope
         {
-            float scale;
-            explicit FontScaleScope(float s) : scale(s)
+            float prevScale = 1.0f;
+            bool  active = false;
+
+            explicit FontScaleScope(float s)
             {
-                if (scale > 0.01f && std::abs(scale - 1.0f) > 0.001f) {
-                    ImGui::SetWindowFontScale(scale);
+                if (auto* win = ImGui::GetCurrentWindowRead()) {
+                    prevScale = win->FontWindowScale;
+                }
+                if (s > 0.01f && std::abs(s - prevScale) > 0.001f) {
+                    ImGui::SetWindowFontScale(s);
+                    active = true;
                 }
             }
             ~FontScaleScope()
             {
-                if (scale > 0.01f && std::abs(scale - 1.0f) > 0.001f) {
-                    ImGui::SetWindowFontScale(1.0f);
+                if (active) {
+                    ImGui::SetWindowFontScale(prevScale);
                 }
             }
         };
@@ -154,6 +160,21 @@ namespace stm::ui
 
         // -------------------------------------------------------- helpers
 
+        bool IsBackTattoo(const data::TattooEntry& a_entry)
+        {
+            if (a_entry.area == "back") return true;
+            auto containsCaseInsensitive = [](std::string_view str, std::string_view sub) {
+                if (sub.empty()) return true;
+                auto it = std::search(str.begin(), str.end(), sub.begin(), sub.end(),
+                    [](char ch1, char ch2) { return std::tolower(static_cast<unsigned char>(ch1)) == std::tolower(static_cast<unsigned char>(ch2)); });
+                return it != str.end();
+            };
+            return containsCaseInsensitive(a_entry.name, "back") ||
+                   containsCaseInsensitive(a_entry.name, "spine") ||
+                   containsCaseInsensitive(a_entry.section, "back") ||
+                   containsCaseInsensitive(a_entry.texture, "back");
+        }
+
         void SeedEditorFrom(const data::TattooEntry& a_entry)
         {
             auto& state = UiState::Get();
@@ -170,7 +191,7 @@ namespace stm::ui
 
             UpdatePreview(a_entry.texture);
 
-            if (a_entry.area == "back") {
+            if (IsBackTattoo(a_entry)) {
                 render::MannequinRenderer::Get().SetBackView();
             }
         }
@@ -506,25 +527,33 @@ namespace stm::ui
                     ImGui::SameLine();
                     const std::string editId = std::string(L("编辑##editslot_", "edit##editslot_")) + std::to_string(slot.slot);
                     if (ImGui::SmallButton(editId.c_str())) {
-                        // Adopt this slot's current look into the editor.
-                        float alpha = 1.0f;
-                        std::uint32_t color = 0;
-                        if (ops::ReadSlotAppearance(data::TargetState::Get().Resolve(), a_area, slot.slot, color, alpha)) {
-                            state.color[0] = static_cast<float>((color >> 16) & 0xFF) / 255.0f;
-                            state.color[1] = static_cast<float>((color >> 8) & 0xFF) / 255.0f;
-                            state.color[2] = static_cast<float>(color & 0xFF) / 255.0f;
-                            state.alpha = alpha;
+                        float alpha = slot.alpha;
+                        std::uint32_t color = slot.color;
+                        ops::ReadSlotAppearance(data::TargetState::Get().Resolve(), a_area, slot.slot, color, alpha);
+
+                        state.color[0] = static_cast<float>((color >> 16) & 0xFF) / 255.0f;
+                        state.color[1] = static_cast<float>((color >> 8) & 0xFF) / 255.0f;
+                        state.color[2] = static_cast<float>(color & 0xFF) / 255.0f;
+                        state.alpha = alpha;
+
+                        const auto* matched = data::TattooDatabase::Get().Find(slot.section, slot.name);
+                        if (matched) {
+                            state.selected = *matched;
+                        } else {
                             state.selected.name = slot.name;
                             state.selected.section = slot.section;
                             state.selected.area = a_area;
                             state.selected.texture.clear();
-                            state.hasSelection = true;
-                            state.targetSlot = slot.slot;
-                            UpdatePreview("");
-                            state.SetStatus(true, std::string(L("已载入槽位 ", "loaded slot ")) + std::to_string(slot.slot), NowSeconds());
-                        } else {
-                            state.SetStatus(false, L("无法读取该槽位的属性", "could not read that slot"), NowSeconds());
                         }
+                        state.hasSelection = true;
+                        state.targetSlot = slot.slot;
+                        UpdatePreview(state.selected.texture);
+
+                        if (IsBackTattoo(state.selected)) {
+                            render::MannequinRenderer::Get().SetBackView();
+                        }
+
+                        state.SetStatus(true, std::string(L("已载入槽位 ", "loaded slot ")) + std::to_string(slot.slot), NowSeconds());
                     }
                 }
             }
@@ -641,8 +670,6 @@ namespace stm::ui
                                     }
                                 }
 
-                                ImGui::TextDisabled("%s", L("左键拖动旋转 / 滚轮缩放 / 右键拖动视角", "Left-drag to rotate / Wheel to zoom / Right-drag"));
-                                ImGui::SameLine();
                                 if (ImGui::SmallButton(L("正面##cam_front", "Front##cam_front"))) {
                                     render::MannequinRenderer::Get().SetFrontView();
                                 }
@@ -658,7 +685,7 @@ namespace stm::ui
                                 ImGui::Checkbox(L("自转##cam_spin", "Spin##cam_spin"), &s_autoSpin);
 
                                 ImGui::TextDisabled("%s: %s", L("身形", "Body"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
-                                ImGui::SameLine();
+
                                 int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
                                 if (ImGui::RadioButton(L("女##mesh_fem", "Female##mesh_fem"), sexChoice == 0)) {
                                     render::MannequinRenderer::Get().InitMeshWithSex(0);
@@ -671,6 +698,9 @@ namespace stm::ui
                                 if (ImGui::SmallButton(L("同步目标##sync_player_sex", "Sync Target##sync_player_sex"))) {
                                     render::MannequinRenderer::Get().ReloadForPlayerSex();
                                 }
+
+                                ImGui::SameLine();
+                                ImGui::TextUnformatted("|");
                                 ImGui::SameLine();
                                 int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
                                 if (ImGui::RadioButton(L("全息##mann_holo_q", "Holo##mann_holo_q"), curCol == 0)) {
@@ -749,8 +779,18 @@ namespace stm::ui
                     if (ImGui::Selectable(L("自动分配空槽##slot_auto", "first free slot##slot_auto"), state.targetSlot < 0)) {
                         state.targetSlot = -1;
                     }
+                    const auto snap = data::SlotSnapshot::Get().Copy();
                     for (int slot = 0; slot < maxSlots; ++slot) {
-                        const std::string option = std::string(L("指定槽位 ", "slot ")) + std::to_string(slot);
+                        std::string statusText = L("[空闲]", "[empty]");
+                        if (snap.valid && snap.area == state.selected.area) {
+                            for (const auto& s : snap.slots) {
+                                if (s.slot == slot && s.occupied) {
+                                    statusText = s.external ? L("[外部占用]", "[external]") : ("[" + s.name + "]");
+                                    break;
+                                }
+                            }
+                        }
+                        const std::string option = std::string(L("槽位 ", "slot ")) + std::to_string(slot) + ": " + statusText;
                         if (ImGui::Selectable((option + "##slot_opt_" + std::to_string(slot)).c_str(), state.targetSlot == slot)) {
                             state.targetSlot = slot;
                         }
@@ -1877,21 +1917,21 @@ namespace stm::ui
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             if (s_bindingHotkey) {
                 s_bindingHotkey = false;
-                return;
-            }
-            const bool hasPopup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
-
-            if (hasPopup) {
-                // Handled by ImGui to close the popup/combo first.
-            } else if (isTyping) {
-                // Defocus active text input so subsequent ESC closes the window.
-                ImGui::ClearActiveID();
-                ImGui::SetWindowFocus();
             } else {
-                g_window->IsOpen = false;
-                s_wasOpen = false;
-                s_canCloseWithToggleKey = false;
-                return;
+                const bool hasPopup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+
+                if (hasPopup) {
+                    // Handled by ImGui to close the popup/combo first.
+                } else if (isTyping) {
+                    // Defocus active text input so subsequent ESC closes the window.
+                    ImGui::ClearActiveID();
+                    ImGui::SetWindowFocus();
+                } else {
+                    g_window->IsOpen = false;
+                    s_wasOpen = false;
+                    s_canCloseWithToggleKey = false;
+                    return;
+                }
             }
         }
 
