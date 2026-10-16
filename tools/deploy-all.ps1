@@ -7,7 +7,7 @@
 [CmdletBinding()]
 param(
     [string]$MoPath = 'E:\MO_Skyrim',
-    [string]$DownloadPath = 'D:\download',
+    [string]$DownloadPath = '',
     [switch]$SkipBuild,
     [switch]$SkipPackage
 )
@@ -44,26 +44,36 @@ $dll = Join-Path $root 'SKSE\Plugins\SlaveTatsMenu.dll'
 if (-not (Test-Path $zip)) { throw "Archive not found: $zip" }
 if (-not (Test-Path $dll)) { throw "DLL not found: $dll" }
 
-# Copy to user download folder
+# Optional: Copy to external download folder only if explicitly specified
 if ($DownloadPath) {
-    New-Item -ItemType Directory -Path $DownloadPath -Force | Out-Null
+    if (-not (Test-Path $DownloadPath)) {
+        New-Item -ItemType Directory -Path $DownloadPath -Force | Out-Null
+    }
     Copy-Item $zip (Join-Path $DownloadPath 'SlaveTatsMenu.zip') -Force
     Write-Host "  -> Copied to $DownloadPath\SlaveTatsMenu.zip" -ForegroundColor Green
-}
-
-# Copy to system Downloads folder
-$sysDownload = 'D:\Downloads'
-if (Test-Path $sysDownload) {
-    Copy-Item $zip (Join-Path $sysDownload 'SlaveTatsMenu.zip') -Force
-    Write-Host "  -> Copied to $sysDownload\SlaveTatsMenu.zip" -ForegroundColor Green
 }
 
 # Deploy to Mod Organizer 2
 if ($MoPath -and (Test-Path $MoPath)) {
     $moModDir = Join-Path $MoPath 'mods\SlaveTatsMenu\SKSE\Plugins'
     New-Item -ItemType Directory -Path $moModDir -Force | Out-Null
-    Copy-Item $dll (Join-Path $moModDir 'SlaveTatsMenu.dll') -Force
-    Write-Host "  -> Deployed live DLL to $moModDir\SlaveTatsMenu.dll" -ForegroundColor Green
+    $targetDll = Join-Path $moModDir 'SlaveTatsMenu.dll'
+
+    try {
+        Copy-Item $dll $targetDll -Force -ErrorAction Stop
+        Write-Host "  -> Deployed live DLL to $targetDll" -ForegroundColor Green
+    } catch {
+        # File might be locked by running game; rename trick allows placing new DLL seamlessly
+        $oldDll = "$targetDll.pending_old"
+        if (Test-Path $oldDll) {
+            $trashDir = 'E:\待删除'
+            if (-not (Test-Path $trashDir)) { New-Item -ItemType Directory -Path $trashDir -Force | Out-Null }
+            try { Move-Item $oldDll (Join-Path $trashDir ("SlaveTatsMenu_" + [System.Guid]::NewGuid().ToString('N') + ".dll.old")) -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        Move-Item $targetDll $oldDll -Force
+        Copy-Item $dll $targetDll -Force
+        Write-Host "  -> Deployed live DLL (hot-swapped while game running) to $targetDll" -ForegroundColor Green
+    }
 
     $moDownloads = Join-Path $MoPath 'downloads'
     if (Test-Path $moDownloads) {
