@@ -1,6 +1,6 @@
 ---
 name: slavetatsmenu-build-deploy
-description: SlaveTatsMenu (天际 SKSE 插件) 的编译、打包与部署自动化流程。当用户要求编译、重新构建、打包、发布或将 SlaveTatsMenu 部署到 MO2 时自动触发。负责调用 build.cmd 编译、package-release.ps1 生成 dist/SlaveTatsMenu.zip，并同步分发至 E:/MO_Skyrim。
+description: SlaveTatsMenu (天际 SKSE 插件) 的编译、打包与部署自动化流程。当用户要求编译、重新构建、打包、发布或将 SlaveTatsMenu 部署到 MO2 时自动触发。负责调用 build.cmd 编译、package-release.ps1 生成 dist/SlaveTatsMenu.zip，并同步分发至 D:/Downloads 与 E:/MO_Skyrim。
 version: 1.0.0
 ---
 
@@ -12,7 +12,7 @@ version: 1.0.0
 
 - 用户要求“编译 / 构建 SlaveTatsMenu”
 - 用户要求“打包 / 打个包 / 发布 SlaveTatsMenu”
-- 用户要求“部署到 MO2 / 部署到 E:/MO_Skyrim”
+- 用户要求“部署到 MO2 / 部署到 E:/MO_Skyrim / 部署到下载目录”
 - 修改完代码后需要一条龙交付成品
 
 ## 核心路径与环境说明
@@ -24,9 +24,9 @@ version: 1.0.0
 - **一键全流程脚本**：`d:\Projects\SlaveTatsMenu\tools\deploy-all.ps1`
 - **目标分发位置**：
   - 本地发布包：`dist\SlaveTatsMenu.zip`
+  - 系统下载目录：`D:\Downloads\SlaveTatsMenu.zip`
   - MO2 激活目录：`E:\MO_Skyrim\mods\SlaveTatsMenu\SKSE\Plugins\SlaveTatsMenu.dll`（热更新）
   - MO2 下载目录：`E:\MO_Skyrim\downloads\SlaveTatsMenu.zip`
-  - 可选外部目录：仅在显式指定 `-DownloadPath <路径>` 时复制
 
 ---
 
@@ -68,9 +68,12 @@ cmd /c build.cmd
 ### 3. 部署 (Deploy)
 使用 `pwsh` 执行文件分发：
 ```powershell
-# 1. 部署到 MO2 激活 mod 目录（直接生效）
+# 1. 复制到系统 Downloads 目录
+Copy-Item 'dist\SlaveTatsMenu.zip' 'D:\Downloads\SlaveTatsMenu.zip' -Force
+
+# 2. 部署到 MO2 激活 mod 目录（直接生效）
 Copy-Item 'SKSE\Plugins\SlaveTatsMenu.dll' 'E:\MO_Skyrim\mods\SlaveTatsMenu\SKSE\Plugins\SlaveTatsMenu.dll' -Force
 
-# 2. 部署到 MO2 下载目录（归档备用）
+# 3. 部署到 MO2 下载目录（归档备用）
 Copy-Item 'dist\SlaveTatsMenu.zip' 'E:\MO_Skyrim\downloads\SlaveTatsMenu.zip' -Force
 ```

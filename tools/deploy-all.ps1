@@ -44,8 +44,15 @@ $dll = Join-Path $root 'SKSE\Plugins\SlaveTatsMenu.dll'
 if (-not (Test-Path $zip)) { throw "Archive not found: $zip" }
 if (-not (Test-Path $dll)) { throw "DLL not found: $dll" }
 
-# Optional: Copy to external download folder only if explicitly specified
-if ($DownloadPath) {
+# Copy to Downloads folder (D:\Downloads)
+$downloadsDir = 'D:\Downloads'
+if (Test-Path $downloadsDir) {
+    Copy-Item $zip (Join-Path $downloadsDir 'SlaveTatsMenu.zip') -Force
+    Write-Host "  -> Copied to $downloadsDir\SlaveTatsMenu.zip" -ForegroundColor Green
+}
+
+# Optional: Copy to additional download folder only if explicitly specified
+if ($DownloadPath -and $DownloadPath -ne $downloadsDir) {
     if (-not (Test-Path $DownloadPath)) {
         New-Item -ItemType Directory -Path $DownloadPath -Force | Out-Null
     }
