@@ -54,33 +54,76 @@ namespace stm::render
                 float3 N = normalize(input.WorldNorm);
                 float3 V = normalize(CameraPos.xyz - input.WorldPos);
 
-                // 菲涅尔边缘泛光（Fresnel Rim Light）
-                float NdotV = saturate(abs(dot(N, V)));
-                float fresnel = pow(1.0f - NdotV, 2.2f);
+                // 双向工作室立体打光：斜前上方主光 + 柔和补光
+                float3 L1 = normalize(float3(0.35f, 0.75f, 0.65f));
+                float3 L2 = normalize(float3(-0.45f, -0.20f, 0.50f));
 
-                float3 baseBody = BodyColor.rgb;
-                float3 rimGlow;
-                float alpha;
+                // 半兰伯特漫反射 (Half-Lambert) 带来饱满的形体起伏与立体体积感
+                float diff1 = saturate(dot(N, L1) * 0.60f + 0.40f);
+                float diff2 = saturate(dot(N, L2) * 0.50f + 0.50f) * 0.35f;
+                float totalDiffuse = diff1 + diff2;
+
+                // 高光 (Blinn-Phong Specular)
+                float3 H1 = normalize(L1 + V);
+                float spec = pow(saturate(dot(N, H1)), 28.0f);
+
+                // 菲涅尔边缘光 (Fresnel Rim Light)
+                float NdotV = saturate(abs(dot(N, V)));
+                float fresnel = pow(1.0f - NdotV, 2.4f);
+
+                float3 bodyColorLit;
+                float bodyAlpha;
 
                 if (Params.z > 0.5f) {
-                    // 自然肉色皮肤质感 (暖色轻柔高光，保持扎实的人体肤色)
-                    rimGlow = float3(0.95f, 0.88f, 0.80f) * fresnel * 0.35f;
-                    alpha = saturate(BodyColor.a + fresnel * 0.12f);
+                    // 自然温润肉色 (Flesh)
+                    float3 diffuseLight = BodyColor.rgb * (totalDiffuse * 0.82f + 0.20f);
+                    float3 specHighlight = float3(1.0f, 0.96f, 0.92f) * spec * 0.30f;
+                    float3 rim = float3(1.0f, 0.88f, 0.80f) * fresnel * 0.40f;
+                    bodyColorLit = diffuseLight + specHighlight + rim;
+                    bodyAlpha = saturate(BodyColor.a + fresnel * 0.12f);
                 } else {
-                    // 默认透明全息蓝假人
-                    rimGlow = float3(0.45f, 0.70f, 1.0f) * fresnel * 0.75f;
-                    alpha = saturate(BodyColor.a + fresnel * 0.45f);
+                    // 全息透明蓝 (Hologram)
+                    float3 diffuseLight = BodyColor.rgb * (totalDiffuse * 0.65f + 0.35f);
+                    float3 rim = float3(0.35f, 0.75f, 1.0f) * fresnel * 0.85f;
+                    float3 specHighlight = float3(0.50f, 0.85f, 1.0f) * spec * 0.35f;
+                    bodyColorLit = diffuseLight + rim + specHighlight;
+                    bodyAlpha = saturate(BodyColor.a + fresnel * 0.45f);
                 }
 
-                float3 color = baseBody + rimGlow;
+                float3 color = bodyColorLit;
+                float alpha = bodyAlpha;
 
                 // 叠加纹身贴图
                 if (Params.x > 0.5f) {
                     float4 tex = TattooTexture.Sample(SamplerLinear, input.UV);
                     float tatAlpha = tex.a * TattooColor.a;
                     if (tatAlpha > 0.01f) {
-                        float3 tatRgb = tex.rgb * TattooColor.rgb;
-                        color = lerp(color, tatRgb, tatAlpha);
+                        float maxC = max(tex.r, max(tex.g, tex.b));
+                        float minC = min(tex.r, min(tex.g, tex.b));
+                        float chroma = maxC - minC;
+
+                        float3 tint = TattooColor.rgb;
+                        float tintBrightness = max(tint.r, max(tint.g, tint.b));
+
+                        float3 tatRgb;
+                        if (chroma > 0.08f) {
+                            // 贴图自带色彩（如粉色爱心、口红、彩绘、指甲油等）：
+                            // 若用户未主动调色（调色板处于默认纯黑/接近黑时），忠实呈现贴图原本的粉嫩/绚丽色彩！
+                            if (tintBrightness < 0.05f) {
+                                tatRgb = tex.rgb;
+                            } else {
+                                // 若用户自选了调色（如选择红色、金黄色、白色等），进行平滑染色
+                                tatRgb = tex.rgb * tint;
+                            }
+                        } else {
+                            // 单色图腾/灰度线条纹身（传统黑白纹身，通过白底灰度图由调色板决定墨水色）：
+                            tatRgb = tex.rgb * tint;
+                        }
+
+                        // 纹身受人体表面光照调制，贴合 3D 体积起伏
+                        float3 litTat = tatRgb * (totalDiffuse * 0.80f + 0.20f);
+
+                        color = lerp(color, litTat, tatAlpha);
                         alpha = max(alpha, tatAlpha * 0.95f);
                     }
                 }
@@ -682,7 +725,7 @@ namespace stm::render
         // 光栅化状态
         D3D11_RASTERIZER_DESC rd{};
         rd.FillMode = D3D11_FILL_SOLID;
-        rd.CullMode = D3D11_CULL_BACK; // 背面剔除，确保外表面与纹身清晰无内部遮挡
+        rd.CullMode = D3D11_CULL_NONE; // 双面完整渲染，结合深度缓冲自动遮挡，避免顺逆时针差异导致正面被剔除
         rd.FrontCounterClockwise = FALSE;
         rd.DepthClipEnable = TRUE;
         if (FAILED(_device->CreateRasterizerState(&rd, &_rasterState))) return false;

@@ -22,6 +22,55 @@ namespace stm::render
             uint32_t bsVersion;
         };
         #pragma pack(pop)
+
+        void ComputeSmoothNormals(std::vector<MannequinVertex>& a_verts, const std::vector<std::uint32_t>& a_indices)
+        {
+            if (a_verts.empty() || a_indices.size() < 3) return;
+
+            for (auto& v : a_verts) {
+                v.norm = { 0.0f, 0.0f, 0.0f };
+            }
+
+            for (std::size_t i = 0; i + 2 < a_indices.size(); i += 3) {
+                auto i0 = a_indices[i];
+                auto i1 = a_indices[i + 1];
+                auto i2 = a_indices[i + 2];
+                if (i0 < a_verts.size() && i1 < a_verts.size() && i2 < a_verts.size()) {
+                    const auto& p0 = a_verts[i0].pos;
+                    const auto& p1 = a_verts[i1].pos;
+                    const auto& p2 = a_verts[i2].pos;
+
+                    float e1x = p1.x - p0.x;
+                    float e1y = p1.y - p0.y;
+                    float e1z = p1.z - p0.z;
+
+                    float e2x = p2.x - p0.x;
+                    float e2y = p2.y - p0.y;
+                    float e2z = p2.z - p0.z;
+
+                    // 面法线 (Cross Product e1 x e2)
+                    float cpx = e1y * e2z - e1z * e2y;
+                    float cpy = e1z * e2x - e1x * e2z;
+                    float cpz = e1x * e2y - e1y * e2x;
+
+                    a_verts[i0].norm.x += cpx; a_verts[i0].norm.y += cpy; a_verts[i0].norm.z += cpz;
+                    a_verts[i1].norm.x += cpx; a_verts[i1].norm.y += cpy; a_verts[i1].norm.z += cpz;
+                    a_verts[i2].norm.x += cpx; a_verts[i2].norm.y += cpy; a_verts[i2].norm.z += cpz;
+                }
+            }
+
+            for (auto& v : a_verts) {
+                float lenSq = v.norm.x * v.norm.x + v.norm.y * v.norm.y + v.norm.z * v.norm.z;
+                if (lenSq > 1e-6f) {
+                    float invLen = 1.0f / std::sqrt(lenSq);
+                    v.norm.x *= invLen;
+                    v.norm.y *= invLen;
+                    v.norm.z *= invLen;
+                } else {
+                    v.norm = { 0.0f, 0.0f, 1.0f };
+                }
+            }
+        }
     }
 
     float NifMeshExtractor::HalfToFloat(std::uint16_t a_half)
@@ -542,7 +591,11 @@ namespace stm::render
             }
         }
 
-        return !a_outVerts.empty() && !a_outIndices.empty();
+        if (!a_outVerts.empty() && !a_outIndices.empty()) {
+            ComputeSmoothNormals(a_outVerts, a_outIndices);
+            return true;
+        }
+        return false;
     }
 
     bool NifMeshExtractor::ParseDirectTriShape(
@@ -657,6 +710,10 @@ namespace stm::render
             }
         }
 
-        return !a_outVerts.empty() && !a_outIndices.empty();
+        if (!a_outVerts.empty() && !a_outIndices.empty()) {
+            ComputeSmoothNormals(a_outVerts, a_outIndices);
+            return true;
+        }
+        return false;
     }
 }
