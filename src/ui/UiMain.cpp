@@ -693,17 +693,17 @@ namespace stm::ui
 
                                 static bool s_isDraggingLeft = false;
                                 static bool s_isDraggingRight = false;
+                                static bool s_isDraggingMiddle = false;
 
                                 if (ImGui::IsItemHovered()) {
-                                    auto* io = ImGui::GetIO();
-                                    if (io && io->MouseWheel != 0.0f) {
-                                        render::MannequinRenderer::Get().Zoom(io->MouseWheel * 0.18f);
-                                    }
                                     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                                         s_isDraggingLeft = true;
                                     }
                                     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                                         s_isDraggingRight = true;
+                                    }
+                                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                                        s_isDraggingMiddle = true;
                                     }
                                 }
 
@@ -721,11 +721,23 @@ namespace stm::ui
                                 if (s_isDraggingRight) {
                                     if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
                                         auto* io = ImGui::GetIO();
-                                        if (io) {
-                                            render::MannequinRenderer::Get().Pan(-io->MouseDelta.y * 0.005f);
+                                        if (io && io->MouseDelta.x != 0.0f) {
+                                            // 按住右键鼠标往左缩小(负值增加相机距离)，往右放大(正值减小相机距离)
+                                            render::MannequinRenderer::Get().Zoom(io->MouseDelta.x * 0.012f);
                                         }
                                     } else {
                                         s_isDraggingRight = false;
+                                    }
+                                }
+
+                                if (s_isDraggingMiddle) {
+                                    if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+                                        auto* io = ImGui::GetIO();
+                                        if (io && io->MouseDelta.y != 0.0f) {
+                                            render::MannequinRenderer::Get().Pan(-io->MouseDelta.y * 0.005f);
+                                        }
+                                    } else {
+                                        s_isDraggingMiddle = false;
                                     }
                                 }
 
