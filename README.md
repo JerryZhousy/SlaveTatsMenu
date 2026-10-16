@@ -33,6 +33,8 @@ Nothing to enable in the MCM, no ESP to activate.
 
 The window is three panels. The left one lists every mod that ships tattoos, filtered by the body area you select at the top. The middle one is the tattoo list for whatever is selected on the left, and it stays collapsed until you pick a mod; clicking the same entry again closes it and hands its width back to the mod list. The right one shows the selected tattoo's texture, colour, opacity and target slot, with the apply and remove actions underneath, followed by the slot status of the current body area, presets, and the diagnostics header.
 
+The 3D preview in that right-hand panel follows the area picked at the top: `All` shows the whole body, and picking a tattoo switches the preview to that tattoo's own part, so there is no second part selector to keep in sync. Its ink is deliberately optimistic. A texture that carries its own colours is drawn as authored while the ink colour is still the default black, which keeps the pattern legible; a black ink colour makes the game render that same texture black. Line art is tinted the way the game tints it.
+
 Results appear in the status line at the bottom of the window:
 
 - `OK` means the ledger changed as requested and the overlay was synchronised.
