@@ -641,13 +641,14 @@ namespace stm::ui
                         ImGui::Text("%s:", L("模型颜色", "Model Color"));
                         ImGui::SameLine();
                         int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
-                        if (ImGui::RadioButton(L("透明全息蓝##mann_holo_q", "Transparent Hologram##mann_holo_q"), curCol == 0)) {
-                            Config::Get().mannequinColor = MannequinColor::kTransparent;
+                        // 顺序: 先自然肉色, 再透明全息蓝
+                        if (ImGui::RadioButton(L("自然肉色##mann_flesh_q", "Natural Flesh##mann_flesh_q"), curCol == 1)) {
+                            Config::Get().mannequinColor = MannequinColor::kFlesh;
                             Config::Get().Save();
                         }
                         ImGui::SameLine();
-                        if (ImGui::RadioButton(L("自然肉色##mann_flesh_q", "Natural Flesh##mann_flesh_q"), curCol == 1)) {
-                            Config::Get().mannequinColor = MannequinColor::kFlesh;
+                        if (ImGui::RadioButton(L("透明全息蓝##mann_holo_q", "Transparent Hologram##mann_holo_q"), curCol == 0)) {
+                            Config::Get().mannequinColor = MannequinColor::kTransparent;
                             Config::Get().Save();
                         }
 
@@ -679,6 +680,8 @@ namespace stm::ui
                                 render::MannequinRenderer::Get().Resize(static_cast<std::uint32_t>(pWidth), static_cast<std::uint32_t>(pHeight));
                             }
 
+                            // 叠加纹身固定开启、体积明暗固定关闭: 这两个开关都会让 3BA 那种
+                            // 重叠网格的身体冒出深浅斑, 所以不再暴露给用户。
                             auto* srv = render::MannequinRenderer::Get().RenderFrame(
                                 reinterpret_cast<ID3D11ShaderResourceView*>(state.previewTexture),
                                 state.color,

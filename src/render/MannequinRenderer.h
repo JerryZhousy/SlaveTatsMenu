@@ -61,12 +61,15 @@ namespace stm::render
         bool Resize(std::uint32_t a_width, std::uint32_t a_height);
 
         // 渲染单帧并返回 ImGui 可用的 ShaderResourceView 指针
+        // a_shadeStrength: 体积明暗强度 0..1。3BA 身体由许多互相重叠的附加网格拼成,
+        // 各块法线朝向不同, 只要留一点明暗就会在块边界显出"一块块深浅斑", 所以默认 0(近纯色)。
         ID3D11ShaderResourceView* RenderFrame(
             ID3D11ShaderResourceView* a_tattooTexture,
             const float a_tattooColor[3],
             float a_tattooAlpha,
             bool a_isBackArea = false,
-            MannequinColor a_bodyColor = MannequinColor::kTransparent
+            MannequinColor a_bodyColor = MannequinColor::kTransparent,
+            float a_shadeStrength = 0.0f
         );
 
         // 部位切换与读取

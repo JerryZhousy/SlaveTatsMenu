@@ -29,22 +29,20 @@ namespace stm::render
     {
         if (a_verts.empty() || a_indices.size() < 3) return;
 
-        // 先保留 NIF 自带的顶点法线: 不同身体模型的三角形绕序并不统一(实测某身型
-        // 胸口区域 79% 的三角形绕序与自带法线相反), 只按绕序累加会让半个身子被照反,
-        // 表现成"一块发白一块发黑"。自带法线只用来定朝向, 平滑仍由三角形累加得到。
-        const std::size_t count = a_verts.size();
-        std::vector<DirectX::XMFLOAT3> authored(count);
-        for (std::size_t i = 0; i < count; ++i) {
-            authored[i] = a_verts[i].norm;
+        // 只能按三角形绕序自己累加, 原因(在真实身体 NIF 上实测):
+        //   绕序累加得到的法线: 与"由人体中轴向外"方向平均点积 +0.58, 相邻边夹角中位数 3.7 度
+        //   顶点数据 offset 20 的 byte4: 平均点积 -0.02(等于随机), 相邻边夹角中位数 44 度、40% 超 60 度
+        // 即那个 byte4 并不是表面法线。曾用它给累加结果定朝向, 结果是逐顶点随机翻符号,
+        // 画面上表现为满身深浅斑点 —— 绝不要再这么做。
+        for (auto& v : a_verts) {
+            v.norm = { 0.0f, 0.0f, 0.0f };
         }
-
-        std::vector<DirectX::XMFLOAT3> accumulated(count, DirectX::XMFLOAT3{ 0.0f, 0.0f, 0.0f });
 
         for (std::size_t i = 0; i + 2 < a_indices.size(); i += 3) {
             auto i0 = a_indices[i];
             auto i1 = a_indices[i + 1];
             auto i2 = a_indices[i + 2];
-            if (i0 < count && i1 < count && i2 < count) {
+            if (i0 < a_verts.size() && i1 < a_verts.size() && i2 < a_verts.size()) {
                 const auto& p0 = a_verts[i0].pos;
                 const auto& p1 = a_verts[i1].pos;
                 const auto& p2 = a_verts[i2].pos;
@@ -62,32 +60,21 @@ namespace stm::render
                 float cpy = e1z * e2x - e1x * e2z;
                 float cpz = e1x * e2y - e1y * e2x;
 
-                accumulated[i0].x += cpx; accumulated[i0].y += cpy; accumulated[i0].z += cpz;
-                accumulated[i1].x += cpx; accumulated[i1].y += cpy; accumulated[i1].z += cpz;
-                accumulated[i2].x += cpx; accumulated[i2].y += cpy; accumulated[i2].z += cpz;
+                a_verts[i0].norm.x += cpx; a_verts[i0].norm.y += cpy; a_verts[i0].norm.z += cpz;
+                a_verts[i1].norm.x += cpx; a_verts[i1].norm.y += cpy; a_verts[i1].norm.z += cpz;
+                a_verts[i2].norm.x += cpx; a_verts[i2].norm.y += cpy; a_verts[i2].norm.z += cpz;
             }
         }
 
-        for (std::size_t i = 0; i < count; ++i) {
-            auto&       n = accumulated[i];
-            const auto& ref = authored[i];
-            const float refLenSq = ref.x * ref.x + ref.y * ref.y + ref.z * ref.z;
-
-            // 与自带法线同向: 绕序反了就把累加结果整体翻过来
-            if (refLenSq > 1e-6f && (n.x * ref.x + n.y * ref.y + n.z * ref.z) < 0.0f) {
-                n.x = -n.x;
-                n.y = -n.y;
-                n.z = -n.z;
-            }
-
-            const float lenSq = n.x * n.x + n.y * n.y + n.z * n.z;
+        for (auto& v : a_verts) {
+            float lenSq = v.norm.x * v.norm.x + v.norm.y * v.norm.y + v.norm.z * v.norm.z;
             if (lenSq > 1e-6f) {
-                const float invLen = 1.0f / std::sqrt(lenSq);
-                a_verts[i].norm = { n.x * invLen, n.y * invLen, n.z * invLen };
-            } else if (refLenSq > 1e-6f) {
-                a_verts[i].norm = ref;  // 没有可用三角形时退回自带法线
+                float invLen = 1.0f / std::sqrt(lenSq);
+                v.norm.x *= invLen;
+                v.norm.y *= invLen;
+                v.norm.z *= invLen;
             } else {
-                a_verts[i].norm = { 0.0f, 0.0f, 1.0f };
+                v.norm = { 0.0f, 0.0f, 1.0f };
             }
         }
     }

@@ -52,52 +52,34 @@ namespace stm::render
 
             float4 PS_Main(PS_INPUT input) : SV_Target
             {
-                float3 N = normalize(input.WorldNorm);
-                float3 V = normalize(CameraPos.xyz - input.WorldPos);
+                // 人体着色一律只用"连续的位置量"。
+                // 3BA/CBBE 的身体是由许多互相重叠的附加网格拼成的, 法线在块与块的接缝处有突变,
+                // 只要用上 N·L / N·V / 高光, 那些接缝就会变成一片片硬边深浅斑 —— 肉色和全息
+                // 两个模式都会中招(你实测过: 关掉体积明暗颜色一致, 打开才有斑块; 与纹身无关)。
+                // 位置是连续的, 所以下面这套"高度 + 离中轴远近"的渐变永远不会出硬边。
+                float3 wp   = input.WorldPos;                       // 模型已归一化到约 ±1
+                float  hgt  = saturate(wp.y * 0.55f + 0.5f);        // 上 -> 下
+                float  lat  = saturate(length(wp.xz) * 0.9f);       // 离中轴远近
+                float  volume = saturate(0.55f + 0.45f * (0.65f * hgt + 0.35f * (1.0f - lat)));
 
-                // 双向工作室立体打光：斜前上方主光 + 柔和补光
-                float3 L1 = normalize(float3(0.35f, 0.75f, 0.65f));
-                float3 L2 = normalize(float3(-0.45f, -0.20f, 0.50f));
+                // Params.w = 体积明暗强度 0..1。默认 0: 两个模式都是整片纯色。
+                float  shadeW = saturate(Params.w);
+                float  shadeBase = 1.0f - 0.20f * shadeW;
+                float  shadeTerm = shadeBase + 0.20f * shadeW * volume;
 
-                // 半兰伯特漫反射 (Half-Lambert) 带来饱满的形体起伏与立体体积感
-                float diff1 = saturate(dot(N, L1) * 0.60f + 0.40f);
-                float diff2 = saturate(dot(N, L2) * 0.50f + 0.50f) * 0.35f;
-                float totalDiffuse = diff1 + diff2;
-
-                // 高光 (Blinn-Phong Specular)
-                float3 H1 = normalize(L1 + V);
-                float spec = pow(saturate(dot(N, H1)), 28.0f);
-
-                // 菲涅尔边缘光 (Fresnel Rim Light)
-                float NdotV = saturate(abs(dot(N, V)));
-                float fresnel = pow(1.0f - NdotV, 2.4f);
-
-                float3 bodyColorLit;
-                float bodyAlpha;
+                float3 color;
+                float alpha;
 
                 if (Params.z > 0.5f) {
-                    // 自然温润肉色 (Flesh)。刻意压平明暗落差: 原来漫反射在 0.20~1.31 倍之间摆,
-                    // 再叠高光与边缘光, 正面朝光的胸口会被推到近白、背光的大腿掉到 0.20 倍的
-                    // 深棕 —— 看上去就是"透明度不均匀、胸口更实"。现在收到 0.80~1.07 倍,
-                    // 只留很淡的高光与边缘光, 全身读起来是一致的一层壳。
-                    float3 diffuseLight = BodyColor.rgb * (0.80f + 0.20f * totalDiffuse);
-                    float3 specHighlight = float3(1.0f, 0.96f, 0.92f) * spec * 0.08f;
-                    float3 rim = float3(1.0f, 0.88f, 0.80f) * fresnel * 0.15f;
-                    bodyColorLit = diffuseLight + specHighlight + rim;
-                    // 肉色模式保持全幅恒定透明度。边缘 fresnel 加 alpha 会让正面朝向相机的
-                    // 胸/乳房等部位比四肢更实, 看上去就是"透明度不均匀"。
-                    bodyAlpha = BodyColor.a;
+                    // 自然肉色: 一整片半透明肉色, 默认几乎纯色
+                    color = BodyColor.rgb * shadeTerm;
+                    alpha = BodyColor.a;
                 } else {
-                    // 全息透明蓝 (Hologram)
-                    float3 diffuseLight = BodyColor.rgb * (totalDiffuse * 0.65f + 0.35f);
-                    float3 rim = float3(0.35f, 0.75f, 1.0f) * fresnel * 0.85f;
-                    float3 specHighlight = float3(0.50f, 0.85f, 1.0f) * spec * 0.35f;
-                    bodyColorLit = diffuseLight + rim + specHighlight;
-                    bodyAlpha = saturate(BodyColor.a + fresnel * 0.45f);
+                    // 全息透明蓝: 同一套渐变再叠一点均匀自发光, 读起来像玻璃壳
+                    // (原来这里的 N·V 边缘光和 1.23 倍的漫反射范围正是全息模式斑块的来源)
+                    color = BodyColor.rgb * shadeTerm + BodyColor.rgb * 0.18f;
+                    alpha = BodyColor.a;
                 }
-
-                float3 color = bodyColorLit;
-                float alpha = bodyAlpha;
 
                 // 叠加纹身贴图。单色线稿照旧"贴图色 x 墨水色"(与游戏内一致);
                 // 但贴图自带彩色、墨色又还是默认黑时, 直接呈现贴图原色, 否则整个
@@ -112,11 +94,26 @@ namespace stm::render
 
                         float3 tatRgb = (texChroma > 0.08f && inkMax < 0.05f) ? tex.rgb : (tex.rgb * ink);
 
-                        // 纹身同样压平光照落差, 否则同一张贴图在胸口发白、在大腿发黑,
-                        // 看起来就像人体的透明度在变
-                        float3 litTat = tatRgb * (0.80f + 0.20f * totalDiffuse);
+                        // 墨水当作"色相层"来叠:
+                        //   彩色墨水 -> 亮度取人体自己的亮度(否则品红/深色墨水会把人体压出
+                        //   一片片暗斑: 实测 75% 的纹身像素比人体暗 10% 以上, 因为品红亮度
+                        //   只有 0.39 而人体是 0.68; 而贴图里 87% 是半透明雾状像素, 叠上去
+                        //   就是"大块不均匀");
+                        //   接近黑/灰的墨水 -> 保留自身暗度(黑墨线稿不能变成灰的看不见)。
+                        // inkHue 的亮度恰好为 0, 所以 inkFinal 的亮度 = 插值出来的目标亮度。
+                        float  effMax = max(tatRgb.r, max(tatRgb.g, tatRgb.b));
+                        float  effMin = min(tatRgb.r, min(tatRgb.g, tatRgb.b));
+                        float  inkSat = saturate((effMax - effMin) * 2.0f);
 
-                        color = lerp(color, litTat, tatAlpha);
+                        float  inkLum   = dot(tatRgb, float3(0.299f, 0.587f, 0.114f));
+                        float3 inkHue   = tatRgb - inkLum;
+                        float  bodyLum  = dot(color, float3(0.299f, 0.587f, 0.114f));
+                        float3 inkFinal = inkHue + lerp(inkLum, bodyLum, inkSat);
+
+                        // 保留一点点人体自身的明暗, 让纹身与人体的观感一致
+                        inkFinal *= (shadeBase + 0.20f * shadeW * volume);
+
+                        color = lerp(color, inkFinal, tatAlpha);
 
                         // 肉色模式不抬像素 alpha, 保证全身透明度完全一致;
                         // 全息模式要让纹身自己撑起不透明度, 否则会被身体看穿。
@@ -805,9 +802,15 @@ namespace stm::render
             return false;
         }
 
-        // 正式绘制用的深度状态: 深度照常测试, 但不写入 —— 每个像素只混合最近的那一层
+        // 正式绘制用的深度状态: 深度只测试不写入, 且必须用 EQUAL。
+        // 预通道已经把"每个像素最近的深度"写成最小值, 用 LESS_EQUAL 的话,
+        // 3BA 那种乳房网格与躯干近共面重叠的地方, 第二层深度只要 <= 第一层就照样通过,
+        // 同一个像素被混合两次(alpha 0.90 -> 0.99), 于是出现"一片片更实/更不透明"的大块
+        // 不均匀 —— 这正是之前一直没修掉的现象。EQUAL 只放行与预通道深度完全相同的那一层,
+        // 每个像素恰好混合一次。两个通道的顶点着色器与常量完全一致, 深度值是逐位可复现的。
         D3D11_DEPTH_STENCIL_DESC dsdTestOnly = dsd;
         dsdTestOnly.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        dsdTestOnly.DepthFunc = D3D11_COMPARISON_EQUAL;
         if (FAILED(_device->CreateDepthStencilState(&dsdTestOnly, &_depthStencilStateTestOnly))) {
             SKSE::log::error("[RENDER] InitBuffers: CreateDepthStencilState (test only) failed");
             return false;
@@ -1026,7 +1029,8 @@ namespace stm::render
         const float a_tattooColor[3],
         float a_tattooAlpha,
         bool a_isBackArea,
-        MannequinColor a_bodyColor)
+        MannequinColor a_bodyColor,
+        float a_shadeStrength)
     {
         auto partIdx = static_cast<std::size_t>(_currentPart);
         if (partIdx >= static_cast<std::size_t>(PreviewPart::kCount)) partIdx = 0;
@@ -1158,10 +1162,10 @@ namespace stm::render
             cb->world = worldMat;
             if (a_bodyColor == MannequinColor::kFlesh) {
                 cb->bodyColor = DirectX::XMFLOAT4(0.82f, 0.68f, 0.58f, 0.90f); // 自然温润肉色
-                cb->params = DirectX::XMFLOAT4(a_tattooTexture != nullptr ? 1.0f : 0.0f, a_isBackArea ? 1.0f : 0.0f, 1.0f, 0.0f);
+                cb->params = DirectX::XMFLOAT4(a_tattooTexture != nullptr ? 1.0f : 0.0f, a_isBackArea ? 1.0f : 0.0f, 1.0f, a_shadeStrength);
             } else {
                 cb->bodyColor = DirectX::XMFLOAT4(0.25f, 0.35f, 0.50f, 0.30f); // 优雅的全息透光蓝
-                cb->params = DirectX::XMFLOAT4(a_tattooTexture != nullptr ? 1.0f : 0.0f, a_isBackArea ? 1.0f : 0.0f, 0.0f, 0.0f);
+                cb->params = DirectX::XMFLOAT4(a_tattooTexture != nullptr ? 1.0f : 0.0f, a_isBackArea ? 1.0f : 0.0f, 0.0f, a_shadeStrength);
             }
             cb->tattooColor = DirectX::XMFLOAT4(a_tattooColor[0], a_tattooColor[1], a_tattooColor[2], a_tattooAlpha);
             cb->cameraPos = DirectX::XMFLOAT4(eyeX, eyeY, eyeZ, 1.0f);
