@@ -9,6 +9,7 @@
 #include "data/CacheParser.h"
 #include "data/PresetIO.h"
 #include "diag/SegmentDiff.h"
+#include "SimpleIni.h"
 
 #include <algorithm>
 #include <fstream>
@@ -222,6 +223,23 @@ int main(int argc, char** argv)
         Check(!stm::data::DeserializePreset("{\"entries\":[{\"area\":\"torso\",\"name\":\"x\"}]}", out, &error), "unknown area leaves nothing usable", error);
         error.clear();
         Check(!stm::data::DeserializePreset("{not json", out, &error), "malformed json rejected");
+    }
+
+    std::cout << "\n=== relaxed ini integer parsing (comments support) ===\n";
+    {
+        auto ParseIntRelaxed = [](const char* s, int def) -> int {
+            if (!s || !*s) return def;
+            while (*s && std::isspace(static_cast<unsigned char>(*s))) ++s;
+            char* end = nullptr;
+            long val = std::strtol(s, &end, 0);
+            return (end == s || val <= 0) ? def : static_cast<int>(val);
+        };
+
+        Check(ParseIntRelaxed("20 ; Default[6]", 12) == 20, "parses number with trailing comment and spaces");
+        Check(ParseIntRelaxed("  6;comment", 12) == 6, "parses leading space and comment without space");
+        Check(ParseIntRelaxed("invalid ; comment", 12) == 12, "invalid string falls back to default");
+        Check(ParseIntRelaxed(nullptr, 12) == 12, "nullptr falls back to default");
+        Check(ParseIntRelaxed("-1", 12) == 12, "non-positive falls back to default");
     }
 
     std::cout << "\n" << (g_failures == 0 ? "ALL CHECKS PASSED" : std::to_string(g_failures) + " CHECK(S) FAILED") << "\n";

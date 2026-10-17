@@ -41,15 +41,32 @@ namespace stm::ng
             CSimpleIniA ini;
             ini.SetUnicode();
 
-            for (const char* path : { "Data/SKSE/Plugins/skee64.ini", "Data/SKSE/Plugins/nioverride.ini" }) {
+            for (const char* path : {
+                     "Data/SKSE/Plugins/skee64.ini",
+                     "Data/SKSE/Plugins/skeevr.ini",
+                     "Data/SKSE/Plugins/skee.ini",
+                     "Data/SKSE/Plugins/nioverride.ini" }) {
                 if (ini.LoadFile(path) < 0) {
                     continue;
                 }
 
-                g_slots.body = static_cast<int>(ini.GetLongValue("Overlays/Body", "iNumOverlays", g_slots.body));
-                g_slots.face = static_cast<int>(ini.GetLongValue("Overlays/Face", "iNumOverlays", g_slots.face));
-                g_slots.hands = static_cast<int>(ini.GetLongValue("Overlays/Hands", "iNumOverlays", g_slots.hands));
-                g_slots.feet = static_cast<int>(ini.GetLongValue("Overlays/Feet", "iNumOverlays", g_slots.feet));
+                auto parseSlot = [&](const char* section, int fallback) {
+                    const char* val = ini.GetValue(section, "iNumOverlays", nullptr);
+                    if (!val || !*val) {
+                        return fallback;
+                    }
+                    while (*val && std::isspace(static_cast<unsigned char>(*val))) {
+                        ++val;
+                    }
+                    char* end = nullptr;
+                    long parsed = std::strtol(val, &end, 0);
+                    return (end == val || parsed <= 0) ? fallback : static_cast<int>(parsed);
+                };
+
+                g_slots.body = parseSlot("Overlays/Body", g_slots.body);
+                g_slots.face = parseSlot("Overlays/Face", g_slots.face);
+                g_slots.hands = parseSlot("Overlays/Hands", g_slots.hands);
+                g_slots.feet = parseSlot("Overlays/Feet", g_slots.feet);
                 g_slots.loaded = true;
 
                 SKSE::log::info("SlaveTatsNG: slot limits from {} -> Body={} Face={} Hands={} Feet={}", path, g_slots.body, g_slots.face, g_slots.hands, g_slots.feet);
