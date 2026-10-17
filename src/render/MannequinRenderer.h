@@ -68,7 +68,7 @@ namespace stm::render
             const float a_tattooColor[3],
             float a_tattooAlpha,
             bool a_isBackArea = false,
-            MannequinColor a_bodyColor = MannequinColor::kTransparent,
+            MannequinColor a_bodyColor = MannequinColor::kFlesh,
             float a_shadeStrength = 0.0f
         );
 
@@ -98,6 +98,7 @@ namespace stm::render
         }
         std::uint32_t GetWidth() const { return _width; }
         std::uint32_t GetHeight() const { return _height; }
+        ID3D11ShaderResourceView* GetShaderResourceView() const { return _shaderResourceView; }
         const std::string& GetMeshSourceInfo() const;
         const std::string& GetMeshSourceInfo(PreviewPart a_part) const;
         int GetCurrentSex() const { return _currentSex; }

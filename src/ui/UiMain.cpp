@@ -16,6 +16,7 @@
 #include "ui/UiState.h"
 
 #include <shellapi.h>
+#include <cmath>
 
 namespace stm::ui
 {
@@ -603,6 +604,166 @@ namespace stm::ui
             }
         }
 
+        void DrawEnlargedPreviewModal(const char* a_modalTitle)
+        {
+            auto& state = UiState::Get();
+
+            auto* viewport = ImGui::GetMainViewport();
+            const ImVec2 center = viewport ? ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f) : ImVec2(640.0f, 360.0f);
+            const float modalW = viewport ? std::min(std::max(600.0f, viewport->Size.x * 0.70f), 860.0f) : 760.0f;
+            const float modalH = viewport ? std::min(std::max(500.0f, viewport->Size.y * 0.80f), 860.0f) : 760.0f;
+
+            ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(modalW, modalH), ImGuiCond_Appearing);
+
+            bool modalOpen = true;
+            if (ImGui::BeginPopupModal(a_modalTitle, &modalOpen, ImGuiWindowFlags_NoCollapse)) {
+                if (!modalOpen || !state.previewTexture || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                    ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                    return;
+                }
+
+                // 顶部信息与快速控制
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s: %s", L("纹身", "Tattoo"), state.selected.name.c_str());
+                ImGui::SameLine();
+                ImGui::TextDisabled("| %s: %s", L("模组", "Mod"), state.selected.section.c_str());
+                ImGui::SameLine();
+                ImGui::TextDisabled("| %s: %s", L("部位", "Part"), PreviewPartName(render::MannequinRenderer::Get().GetCurrentPart()));
+                ImGui::SameLine();
+                ImGui::TextDisabled("| %s: %s", L("模型", "Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
+
+                ImGui::Text("%s:", L("性别", "Sex"));
+                ImGui::SameLine();
+                int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
+                if (ImGui::RadioButton(L("女##big_fem", "Female##big_fem"), sexChoice == 0)) {
+                    render::MannequinRenderer::Get().InitMeshWithSex(0);
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton(L("男##big_male", "Male##big_male"), sexChoice == 1)) {
+                    render::MannequinRenderer::Get().InitMeshWithSex(1);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton(L("同步目标##big_sync", "Sync Target##big_sync"))) {
+                    render::MannequinRenderer::Get().ReloadForPlayerSex();
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton(L("复位视角##big_cam_rst", "Reset Camera##big_cam_rst"))) {
+                    render::MannequinRenderer::Get().ResetCamera();
+                }
+                ImGui::SameLine();
+                ImGui::Text(" | %s:", L("模型颜色", "Color"));
+                ImGui::SameLine();
+                int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
+                if (ImGui::RadioButton(L("自然肉色##big_flesh", "Flesh##big_flesh"), curCol == 1)) {
+                    Config::Get().mannequinColor = MannequinColor::kFlesh;
+                    Config::Get().Save();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton(L("透明全息蓝##big_holo", "Holo##big_holo"), curCol == 0)) {
+                    Config::Get().mannequinColor = MannequinColor::kTransparent;
+                    Config::Get().Save();
+                }
+
+                ImGui::Separator();
+
+                // 3D 渲染画面 (填满窗口剩余主要空间)
+                const float availW = std::max(180.0f, ImGui::GetContentRegionAvail().x);
+                const float availH = std::max(180.0f, ImGui::GetContentRegionAvail().y - 36.0f);
+
+                if (render::MannequinRenderer::Get().GetWidth() != static_cast<std::uint32_t>(availW) ||
+                    render::MannequinRenderer::Get().GetHeight() != static_cast<std::uint32_t>(availH)) {
+                    render::MannequinRenderer::Get().Resize(static_cast<std::uint32_t>(availW), static_cast<std::uint32_t>(availH));
+                }
+
+                auto* bigSrv = render::MannequinRenderer::Get().RenderFrame(
+                    reinterpret_cast<ID3D11ShaderResourceView*>(state.previewTexture),
+                    state.color,
+                    state.alpha,
+                    false,
+                    Config::Get().mannequinColor
+                );
+
+                if (bigSrv) {
+                    ImGui::Image(reinterpret_cast<ImGuiMCP::ImTextureID>(bigSrv), ImVec2(availW, availH),
+                        ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
+
+                    static bool s_bigDraggingLeft = false;
+                    static bool s_bigDraggingRight = false;
+                    static bool s_bigDraggingMiddle = false;
+                    static double s_bigLeftDownTime = 0.0;
+                    static float s_bigLeftDragDist = 0.0f;
+
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", L("左键拖动: 旋转视角 | 右键左右拖动: 缩放 | 中键拖动: 平移\n【左键短点击】: 恢复/关闭窗口",
+                                                  "Left-drag: Rotate | Right-drag: Zoom | Middle-drag: Pan\n[Left short-click]: Restore/Close window"));
+
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                            s_bigDraggingLeft = true;
+                            s_bigLeftDownTime = NowSeconds();
+                            s_bigLeftDragDist = 0.0f;
+                        }
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                            s_bigDraggingRight = true;
+                        }
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                            s_bigDraggingMiddle = true;
+                        }
+                    }
+
+                    if (s_bigDraggingLeft) {
+                        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                            auto* io = ImGui::GetIO();
+                            if (io) {
+                                s_bigLeftDragDist += std::hypot(io->MouseDelta.x, io->MouseDelta.y);
+                                render::MannequinRenderer::Get().Rotate(io->MouseDelta.x * 0.012f, io->MouseDelta.y * 0.012f);
+                            }
+                        } else {
+                            s_bigDraggingLeft = false;
+                            const double elapsed = NowSeconds() - s_bigLeftDownTime;
+                            if (elapsed < 0.35 && s_bigLeftDragDist < 6.0f) {
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                    }
+
+                    if (s_bigDraggingRight) {
+                        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                            auto* io = ImGui::GetIO();
+                            if (io && io->MouseDelta.x != 0.0f) {
+                                render::MannequinRenderer::Get().Zoom(io->MouseDelta.x * 0.012f);
+                            }
+                        } else {
+                            s_bigDraggingRight = false;
+                        }
+                    }
+
+                    if (s_bigDraggingMiddle) {
+                        if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+                            auto* io = ImGui::GetIO();
+                            if (io && io->MouseDelta.y != 0.0f) {
+                                render::MannequinRenderer::Get().Pan(-io->MouseDelta.y * 0.005f);
+                            }
+                        } else {
+                            s_bigDraggingMiddle = false;
+                        }
+                    }
+                }
+
+                // 底部操作栏与提示
+                ImGui::Spacing();
+                const float btnW = 150.0f;
+                if (ImGui::Button(L("恢复窗口 (ESC)##restore_win", "Restore (ESC)##restore_win"), ImVec2(btnW, 0.0f))) {
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", L("提示: 左键拖动旋转 / 右键左右拖动缩放 / 中键垂直平移 | 左键短点击画面或按 ESC 恢复窗口",
+                                           "Tip: Left-drag rotate / Right-drag zoom / Middle-drag pan | Left short-click or ESC to restore"));
+
+                ImGui::EndPopup();
+            }
+        }
+
         void DrawInspector(float a_width, float a_height)
         {
             auto& state = UiState::Get();
@@ -675,20 +836,27 @@ namespace stm::ui
                             const float pWidth = std::max(180.0f, a_width - 30.0f);
                             const float pHeight = 220.0f;
 
-                            if (render::MannequinRenderer::Get().GetWidth() != static_cast<std::uint32_t>(pWidth) ||
-                                render::MannequinRenderer::Get().GetHeight() != static_cast<std::uint32_t>(pHeight)) {
-                                render::MannequinRenderer::Get().Resize(static_cast<std::uint32_t>(pWidth), static_cast<std::uint32_t>(pHeight));
-                            }
+                            static const char* kEnlargedModalId = "###stm_3d_preview_modal";
+                            const std::string modalTitle = std::string(L("3D 模特预览（放大）", "3D Mannequin Preview (Enlarged)")) + kEnlargedModalId;
+                            const bool isModalOpen = ImGui::IsPopupOpen(modalTitle.c_str());
 
-                            // 叠加纹身固定开启、体积明暗固定关闭: 这两个开关都会让 3BA 那种
-                            // 重叠网格的身体冒出深浅斑, 所以不再暴露给用户。
-                            auto* srv = render::MannequinRenderer::Get().RenderFrame(
-                                reinterpret_cast<ID3D11ShaderResourceView*>(state.previewTexture),
-                                state.color,
-                                state.alpha,
-                                false,
-                                Config::Get().mannequinColor
-                            );
+                            ID3D11ShaderResourceView* srv = nullptr;
+                            if (!isModalOpen) {
+                                if (render::MannequinRenderer::Get().GetWidth() != static_cast<std::uint32_t>(pWidth) ||
+                                    render::MannequinRenderer::Get().GetHeight() != static_cast<std::uint32_t>(pHeight)) {
+                                    render::MannequinRenderer::Get().Resize(static_cast<std::uint32_t>(pWidth), static_cast<std::uint32_t>(pHeight));
+                                }
+
+                                srv = render::MannequinRenderer::Get().RenderFrame(
+                                    reinterpret_cast<ID3D11ShaderResourceView*>(state.previewTexture),
+                                    state.color,
+                                    state.alpha,
+                                    false,
+                                    Config::Get().mannequinColor
+                                );
+                            } else {
+                                srv = render::MannequinRenderer::Get().GetShaderResourceView();
+                            }
 
                             if (srv) {
                                 ImGui::Image(reinterpret_cast<ImGuiMCP::ImTextureID>(srv), ImVec2(pWidth, pHeight),
@@ -697,10 +865,17 @@ namespace stm::ui
                                 static bool s_isDraggingLeft = false;
                                 static bool s_isDraggingRight = false;
                                 static bool s_isDraggingMiddle = false;
+                                static double s_leftClickDownTime = 0.0;
+                                static float s_leftDragDistance = 0.0f;
 
                                 if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("%s", L("左键拖动: 旋转视角 | 右键左右拖动: 缩放 | 中键拖动: 平移\n【左键短点击】: 放大窗口",
+                                                              "Left-drag: Rotate | Right-drag: Zoom | Middle-drag: Pan\n[Left short-click]: Enlarge window"));
+
                                     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                                         s_isDraggingLeft = true;
+                                        s_leftClickDownTime = NowSeconds();
+                                        s_leftDragDistance = 0.0f;
                                     }
                                     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                                         s_isDraggingRight = true;
@@ -714,10 +889,15 @@ namespace stm::ui
                                     if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                                         auto* io = ImGui::GetIO();
                                         if (io) {
+                                            s_leftDragDistance += std::hypot(io->MouseDelta.x, io->MouseDelta.y);
                                             render::MannequinRenderer::Get().Rotate(io->MouseDelta.x * 0.012f, io->MouseDelta.y * 0.012f);
                                         }
                                     } else {
                                         s_isDraggingLeft = false;
+                                        const double elapsed = NowSeconds() - s_leftClickDownTime;
+                                        if (elapsed < 0.35 && s_leftDragDistance < 6.0f) {
+                                            ImGui::OpenPopup(modalTitle.c_str());
+                                        }
                                     }
                                 }
 
@@ -770,7 +950,13 @@ namespace stm::ui
                                 if (ImGui::SmallButton(L("复位视角##cam_rst", "Reset Camera##cam_rst"))) {
                                     render::MannequinRenderer::Get().ResetCamera();
                                 }
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(L("放大窗口##cam_enlarge", "Enlarge##cam_enlarge"))) {
+                                    ImGui::OpenPopup(modalTitle.c_str());
+                                }
                             }
+
+                            DrawEnlargedPreviewModal(modalTitle.c_str());
                         }
                     } else {
                         const float pSize = Config::Get().previewSize;
@@ -1854,7 +2040,7 @@ namespace stm::ui
                     config.fontScale = 1.0f;
                     config.showPreview = true;
                     config.previewSize = 96.0f;
-                    config.mannequinColor = MannequinColor::kTransparent;
+                    config.mannequinColor = MannequinColor::kFlesh;
                     config.slotPolicy = SlotPolicy::kAutoFreeSlot;
                     config.defaultAlpha = 1.0f;
                     config.defaultColor = 0x000000;
