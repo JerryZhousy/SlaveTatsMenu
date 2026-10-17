@@ -1,32 +1,51 @@
 <#
     Assemble the release archive for SlaveTatsMenu.
 
-    The archive holds exactly what a user installs, plus the notices that have to travel with the
-    binary because the DLL statically links GPL/LGPL/MIT/BSD code:
+    The archive is a FOMOD package: Mod Organizer 2 and Vortex open it with a
+    one-step wizard that picks the interface language and writes it into the INI,
+    which is friendlier than making the user hand-edit a config file before the
+    first launch.
 
+        fomod/info.xml
+        fomod/ModuleConfig.xml
+        Options/English/SlaveTatsMenu.ini     generated from the canonical INI
+        Options/Chinese/SlaveTatsMenu.ini     generated from the canonical INI
         SKSE/Plugins/SlaveTatsMenu.dll
         SKSE/Plugins/SlaveTatsMenu/SlaveTatsMenu.ini
         LICENSE
         THIRD_PARTY.md
         LICENSES/*
 
-    Never included: build/ (CommonLibSSE-NG objects, the MinHook sources, the precompiled header),
-    SlaveTatsMenu.dll.bak-*, meta.ini, src/, tools/.
+    The two Options INIs are generated here instead of being kept in the repo:
+    each is the canonical INI with only its "Language =" line rewritten, so a
+    config key added later can never go missing from one of the language
+    variants. The version in fomod/info.xml is stamped from CMakeLists.txt for
+    the same reason.
+
+    Never included: build/ (CommonLibSSE-NG objects, the MinHook sources, the
+    precompiled header), src/, tools/, meta.ini, SlaveTatsMenu.dll.bak-*.
+
+    Staging happens in a fresh %TEMP% directory per run and is deliberately not
+    deleted afterwards - nothing here removes files except the previous archive,
+    which is moved to D:\待删除.
 
     Usage:
         .\tools\package-release.ps1
         .\tools\package-release.ps1 -OutDir D:\releases
+        .\tools\package-release.ps1 -NoFomod        # flat archive, no wizard
 #>
 [CmdletBinding()]
 param(
     [string]$ArchiveName = 'SlaveTatsMenu.zip',
-    [string]$OutDir = (Join-Path $PSScriptRoot '..\dist')
+    [string]$OutDir = (Join-Path $PSScriptRoot '..\dist'),
+    [switch]$NoFomod
 )
 
 $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $outDir = [System.IO.Path]::GetFullPath($OutDir)
+$utf8 = [System.Text.UTF8Encoding]::new($false)
 
 Write-Output "source : $root"
 Write-Output "output : $outDir"
@@ -61,6 +80,22 @@ if ($stale.Count -gt 0) {
     Write-Warning "$($stale.Count) source file(s) are newer than the DLL - rebuild before shipping."
 }
 
+# --- version and FOMOD sources ----------------------------------------------------------------
+
+$versionLine = Select-String -LiteralPath (Join-Path $root 'CMakeLists.txt') `
+    -Pattern 'project\s*\(\s*SlaveTatsMenu\s+VERSION\s+([0-9]+(?:\.[0-9]+)*)' | Select-Object -First 1
+if (-not $versionLine) { throw 'cannot read the project version from CMakeLists.txt.' }
+$version = $versionLine.Matches[0].Groups[1].Value
+Write-Output "version: $version"
+
+$fomodSource = @('info.xml', 'ModuleConfig.xml') | ForEach-Object { Join-Path $root "fomod\$_" }
+if (-not $NoFomod) {
+    $missingFomod = @($fomodSource | Where-Object { -not (Test-Path $_) })
+    if ($missingFomod.Count -gt 0) {
+        throw "missing FOMOD source(s):`n  $($missingFomod -join "`n  ")"
+    }
+}
+
 # --- verify, then stage -----------------------------------------------------------------------
 
 $missing = @($payload | Where-Object { -not (Test-Path $_) })
@@ -71,9 +106,11 @@ if ($payload -match '\\build\\|\.bak-') {
     throw 'build output or a backup DLL slipped into the payload list.'
 }
 
-$staging = Join-Path ([System.IO.Path]::GetTempPath()) 'slave-tats-menu-release'
-if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
-New-Item -ItemType Directory -Path $staging | Out-Null
+$staging = Join-Path ([System.IO.Path]::GetTempPath()) ('slave-tats-menu-release-{0}-{1}' -f
+    (Get-Date -Format 'yyyyMMdd-HHmmss'), ([guid]::NewGuid().ToString('N').Substring(0, 6)))
+New-Item -ItemType Directory -Path $staging -Force | Out-Null
+Write-Output "staging: $staging"
+Write-Output ''
 
 foreach ($file in $payload) {
     $relative = $file.Substring($root.Length).TrimStart('\')
@@ -81,6 +118,50 @@ foreach ($file in $payload) {
     New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
     Copy-Item $file $target -Force
 }
+
+if (-not $NoFomod) {
+    # fomod/: both XMLs, with the version stamped into info.xml from CMakeLists.txt
+    $fomodStage = Join-Path $staging 'fomod'
+    New-Item -ItemType Directory -Path $fomodStage -Force | Out-Null
+    foreach ($file in $fomodSource) {
+        Copy-Item $file (Join-Path $fomodStage (Split-Path $file -Leaf)) -Force
+    }
+
+    $infoPath = Join-Path $fomodStage 'info.xml'
+    $info = [System.IO.File]::ReadAllText($infoPath, $utf8)
+    $stamped = [regex]::Replace($info, '<Version\s+MachineVersion="[^"]*"\s*>[^<]*</Version>',
+        "<Version MachineVersion=`"$version`">$version</Version>")
+    if ($stamped -notmatch [regex]::Escape("MachineVersion=`"$version`"")) {
+        throw 'could not stamp the version into fomod/info.xml.'
+    }
+    [System.IO.File]::WriteAllText($infoPath, $stamped, $utf8)
+
+    # Options/<language>/SlaveTatsMenu.ini, generated from the canonical INI
+    $canonical = [System.IO.File]::ReadAllText($ini, $utf8)
+    if ($canonical -notmatch '(?m)^\s*Language\s*=') {
+        throw "the canonical INI has no 'Language =' line to switch."
+    }
+    foreach ($language in 'English', 'Chinese') {
+        $code = if ($language -eq 'English') { 'en' } else { 'zh' }
+        $variant = [regex]::Replace($canonical, '(?m)^[ \t]*Language[ \t]*=.*$', "Language = $code")
+        $variantDir = Join-Path $staging "Options\$language"
+        New-Item -ItemType Directory -Path $variantDir -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $variantDir 'SlaveTatsMenu.ini'), $variant, $utf8)
+    }
+
+    # every source the wizard references has to exist in the staged tree
+    $moduleConfig = [xml][System.IO.File]::ReadAllText((Join-Path $fomodStage 'ModuleConfig.xml'), $utf8)
+    $references = @($moduleConfig.SelectNodes('//*[@source]') | ForEach-Object { $_.source } | Sort-Object -Unique)
+    foreach ($reference in $references) {
+        if (-not (Test-Path -LiteralPath (Join-Path $staging $reference))) {
+            throw "fomod/ModuleConfig.xml references a path that is not in the archive: $reference"
+        }
+    }
+    Write-Output "FOMOD references verified: $($references.Count) source(s)"
+    Write-Output ''
+}
+
+# --- archive -----------------------------------------------------------------------------------
 
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $archive = Join-Path $outDir $ArchiveName
@@ -105,8 +186,16 @@ try {
     '{0,9}  {1}' -f (Get-Item $archive).Length, "(archive: $archive)"
     Write-Output ''
     Write-Output "$($zip.Entries.Count) entries."
+
+    if (-not $NoFomod) {
+        $names = @($zip.Entries | ForEach-Object FullName)
+        foreach ($required in 'fomod/info.xml', 'fomod/ModuleConfig.xml',
+                               'Options/English/SlaveTatsMenu.ini', 'Options/Chinese/SlaveTatsMenu.ini') {
+            if ($names -notcontains $required) { throw "archive is missing $required" }
+        }
+        Write-Output 'FOMOD present: fomod/info.xml + fomod/ModuleConfig.xml (UI language step).'
+    }
 }
 finally {
     $zip.Dispose()
-    Remove-Item $staging -Recurse -Force
 }

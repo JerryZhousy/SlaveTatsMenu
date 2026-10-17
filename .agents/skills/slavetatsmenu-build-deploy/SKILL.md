@@ -63,7 +63,8 @@ cmd /c build.cmd
 & "D:\Program Files\PowerShell\7\pwsh.exe" -File .\tools\package-release.ps1
 ```
 - **输出产物**：`dist\SlaveTatsMenu.zip`
-- **内容检查**：包含 `SlaveTatsMenu.dll`、`SlaveTatsMenu.ini`、`LICENSE`、`THIRD_PARTY.md` 及 `LICENSES/*` 许可文件，包名固定为 `SlaveTatsMenu.zip`。
+- **内容检查**：包含 `fomod/info.xml`、`fomod/ModuleConfig.xml`、`Options/English|Chinese/SlaveTatsMenu.ini`（由仓库内规范 INI 在打包时按 Language 行生成）、`SlaveTatsMenu.dll`、`SlaveTatsMenu.ini`、`LICENSE`、`THIRD_PARTY.md` 及 `LICENSES/*` 许可文件，包名固定为 `SlaveTatsMenu.zip`。
+- **FOMOD**：安装包带一步语言选择向导；`fomod/info.xml` 的版本号由打包脚本从 `CMakeLists.txt` 自动注入，不要手改。加 `-NoFomod` 可打无向导的扁平包。
 
 ### 3. 部署 (Deploy)
 使用 `pwsh` 执行文件分发：

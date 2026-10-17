@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+  <moduleName>SlaveTats Menu</moduleName>
+
+  <requiredInstallFiles>
+    <!-- The plugin itself is not optional: SKSE\Plugins\SlaveTatsMenu.dll plus the
+         default SlaveTatsMenu.ini. The language step below overwrites that INI. -->
+    <folder source="SKSE" priority="0" />
+    <!-- Notices for everything the DLL statically links, plus the interfaces it
+         compiles against. They install next to SKSE/ at the mod's root. -->
+    <folder source="LICENSES" priority="0" />
+    <file source="LICENSE" priority="0" />
+    <file source="THIRD_PARTY.md" priority="0" />
+  </requiredInstallFiles>
+
+  <installSteps order="Explicit">
+    <installStep name="UI language">
+      <optionalFileGroups>
+        <group name="Interface language" type="SelectExactlyOne">
+          <plugins order="Explicit">
+
+            <plugin name="English">
+              <description>English interface.
+You can change this later from the in-game Settings tab, or by editing Language in SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini.</description>
+              <files>
+                <file source="Options\English\SlaveTatsMenu.ini" destination="SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini" priority="1" />
+              </files>
+              <typeDescriptor>
+                <type name="Recommended" />
+              </typeDescriptor>
+            </plugin>
+
+            <plugin name="Chinese (Simplified)">
+              <description>Simplified Chinese interface.
+You can change this later from the in-game Settings tab, or by editing Language in SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini.</description>
+              <files>
+                <file source="Options\Chinese\SlaveTatsMenu.ini" destination="SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini" priority="1" />
+              </files>
+              <typeDescriptor>
+                <type name="Optional" />
+              </typeDescriptor>
+            </plugin>
+
+          </plugins>
+        </group>
+      </optionalFileGroups>
+    </installStep>
+  </installSteps>
+</config>

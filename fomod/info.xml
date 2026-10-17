@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<fomod>
+  <Name>SlaveTats Menu</Name>
+  <Author>4x9M133</Author>
+  <!-- Version is stamped from CMakeLists.txt by tools/package-release.ps1. -->
+  <Version MachineVersion="1.1.0">1.1.0</Version>
+  <Description>In-game ImGui tattoo editor for SlaveTatsNG. Pick the interface language on the next page.</Description>
+  <Website>https://github.com/JerryZhousy/SlaveTatsMenu</Website>
+</fomod>
