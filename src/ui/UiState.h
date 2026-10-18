@@ -42,7 +42,6 @@ namespace stm::ui
         std::string           previewPath;
         std::string           previewLoadedPath;
         ImGuiMCP::ImTextureID previewTexture = nullptr;
-        ImGuiMCP::ImVec2      previewSize{ 0.0f, 0.0f };
 
         // bottom status line
         std::string statusText;

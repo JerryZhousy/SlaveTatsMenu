@@ -28,7 +28,7 @@ namespace stm
         std::uint32_t toggleKey = 0x44;  // DirectInput scan code, 0x44 = F10
         float         defaultAlpha = 1.0f;
         std::uint32_t defaultColor = 0x000000;
-        Language      language = Language::kEnglish;
+        std::string   language = "en";
         SlotPolicy    slotPolicy = SlotPolicy::kAutoFreeSlot;
 
         // [UI]
@@ -48,9 +48,14 @@ namespace stm
         int         probeSlots = 12;
 
         // Wraps the mutating entries of SlaveTatsNG's interface table so every
-        // C++ caller is logged by name (see diag/CallTrace.h). On by default: it
-        // is the only way to attribute a silent ledger change to a plugin.
-        bool callTraceEnabled = true;
+        // C++ caller is logged by name (see diag/CallTrace.h).
+        //
+        // OFF by default. Installing it means VirtualProtect-ing another
+        // module's read-only data and swapping its function pointers for shims;
+        // if that module is updated, or a third plugin wraps the same table,
+        // the restore can silently fail. It is a diagnostic, not a feature —
+        // turn it on only while actively attributing a ledger change.
+        bool callTraceEnabled = false;
 
         static Config& Get();
 
@@ -58,7 +63,7 @@ namespace stm
         void Load();
         void Save();
 
-        bool IsChinese() const { return language == Language::kChinese; }
+        bool IsChinese() const;
 
         // Absolute path of Data/SKSE/Plugins/SlaveTatsMenu/SlaveTatsMenu.ini.
         // Uses the process working directory (the game root under MO2) so the

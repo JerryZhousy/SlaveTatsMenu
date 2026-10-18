@@ -4,6 +4,7 @@
 #include "bridge/KnownTargets.h"
 #include "bridge/SlaveTatsNg.h"
 #include "core/Config.h"
+#include "core/Translation.h"
 #include "core/Tasks.h"
 #include "data/SlotSnapshot.h"
 #include "data/TargetState.h"
@@ -26,9 +27,9 @@ namespace stm::ui
 
         const char* kAreaIds[] = { "", "Body", "Face", "Hands", "Feet" };
 
-        const char* L(const char* a_zh, const char* a_en)
+        inline const char* L(const char* a_key)
         {
-            return Config::Get().IsChinese() ? a_zh : a_en;
+            return Tr(a_key);
         }
 
         struct FontScaleScope
@@ -58,6 +59,31 @@ namespace stm::ui
         {
             static const auto s_start = std::chrono::steady_clock::now();
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - s_start).count();
+        }
+
+        // Everything below this point touches the engine, JContainers or the
+        // task-queue-shared state directly, which is only legal on the game's main
+        // thread. The framework does call us there today, but if that ever stops
+        // being true, doing the work anyway is a silent data race - so refuse and
+        // say so once, instead of logging a warning and carrying on.
+        bool OnGameThread()
+        {
+            static const std::uint32_t s_renderThread = ThisThreadId();
+            static const bool          s_sameThread = LoadThreadId() == 0 || s_renderThread == LoadThreadId();
+            static const bool          s_logged = [] {
+                SKSE::log::info("UI: rendering on thread {} (plugin load thread {})", s_renderThread, LoadThreadId());
+                return true;
+            }();
+            (void)s_logged;
+
+            if (!s_sameThread) {
+                static bool s_warned = false;
+                if (!s_warned) {
+                    s_warned = true;
+                    SKSE::log::error("UI: render callback runs on thread {} but the game thread is {} - skipping the frame, direct engine access from here is unsafe", s_renderThread, LoadThreadId());
+                }
+            }
+            return s_sameThread;
         }
 
         // ---------------------------------------------------------------- list
@@ -152,7 +178,7 @@ namespace stm::ui
             }
 
             state.previewLoadedPath = path;
-            state.previewTexture = SKSEMenuFramework::LoadTexture(path, state.previewSize);
+            state.previewTexture = SKSEMenuFramework::LoadTexture(path);
             if (!state.previewTexture) {
                 // Not fatal: loose file missing, packed in BSA, or framework error.
                 SKSE::log::warn("UI: preview for '{}' unavailable (missing loose file, packed in BSA, or framework error)", path);
@@ -202,13 +228,13 @@ namespace stm::ui
         {
             switch (a_part) {
             case render::PreviewPart::kFace:
-                return L("面部/头部", "Face/Head");
+                return Tr("$STM_Part_FaceHead");
             case render::PreviewPart::kHands:
-                return L("手部", "Hands");
+                return Tr("$STM_Part_Hands");
             case render::PreviewPart::kFeet:
-                return L("脚部", "Feet");
+                return Tr("$STM_Part_Feet");
             default:
-                return L("身体", "Body");
+                return Tr("$STM_Area_Body");
             }
         }
 
@@ -220,11 +246,17 @@ namespace stm::ui
             state.hasSelection = true;
             state.targetSlot = -1;
 
-            const std::uint32_t rgb = a_entry.defaultColor;
+            // A pack that does not author a colour/alpha leaves the built-in
+            // defaults (black / fully opaque) in the entry, and that is exactly
+            // where the user's configured starting ink applies. Authored values
+            // always win, so coloured tattoo packs keep their own palette.
+            const auto&         config = Config::Get();
+            const std::uint32_t rgb = (a_entry.defaultColor == 0x000000) ? config.defaultColor : a_entry.defaultColor;
+
             state.color[0] = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
             state.color[1] = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
             state.color[2] = static_cast<float>(rgb & 0xFF) / 255.0f;
-            state.alpha = a_entry.defaultAlpha;
+            state.alpha = (a_entry.defaultAlpha >= 1.0f) ? config.defaultAlpha : a_entry.defaultAlpha;
 
             UpdatePreview(a_entry.texture);
 
@@ -331,32 +363,32 @@ namespace stm::ui
             auto& state = UiState::Get();
             auto& target = data::TargetState::Get();
 
-            ImGui::Text("%s", L("当前目标:", "Target:"));
+            ImGui::Text("%s", Tr("$STM_Target_2"));
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "[ %s ]", target.DisplayName().c_str());
 
             ImGui::SameLine();
-            if (ImGui::SmallButton(L("拾取准星 NPC##pick_target", "Pick crosshair NPC##pick_target"))) {
+            if (ImGui::SmallButton(Tr("$STM_PickCrosshairNpc"))) {
                 if (target.PickFromCrosshair()) {
-                    state.SetStatus(true, std::string(L("已选定目标: ", "target: ")) + target.DisplayName(), NowSeconds());
+                    state.SetStatus(true, std::string(Tr("$STM_Target")) + target.DisplayName(), NowSeconds());
                 } else {
-                    state.SetStatus(false, L("准星没有对准任何角色", "the crosshair is not on an actor"), NowSeconds());
+                    state.SetStatus(false, Tr("$STM_Target_CrosshairEmpty"), NowSeconds());
                 }
                 data::SlotSnapshot::Get().Invalidate();
             }
 
             ImGui::SameLine();
-            if (ImGui::SmallButton(L("设为主角##reset_target", "Reset to player##reset_target"))) {
+            if (ImGui::SmallButton(Tr("$STM_ResetToPlayer"))) {
                 target.ResetToPlayer();
-                state.SetStatus(true, L("已切换为主角自己", "target reset to the player"), NowSeconds());
+                state.SetStatus(true, Tr("$STM_TargetResetToThe"), NowSeconds());
                 data::SlotSnapshot::Get().Invalidate();
             }
 
             // The two library buttons sit at the right edge of the row. Their
             // labels are measured rather than guessed: "重新扫描纹身库" needs far
             // more than the 144 px the old fixed box offered.
-            const char*  rescanLabel = L("重新扫描纹身库##rescan", "Rescan library##rescan");
-            const char*  syncLabel = L("强制同步##sync", "Force sync##sync");
+            const char*  rescanLabel = Tr("$STM_Btn_Rescan");
+            const char*  syncLabel = Tr("$STM_Btn_ForceSync");
             const ImVec2 rescanSize = ButtonSize(rescanLabel, 144.0f);
             const ImVec2 syncSize = ButtonSize(syncLabel, 144.0f);
             const float  spacing = ImGui::GetStyle()->ItemSpacing.x;
@@ -377,7 +409,7 @@ namespace stm::ui
                 db.Rebuild();
                 state.hasSelection = false;
                 UpdatePreview("");
-                state.SetStatus(true, std::string(L("已重建纹身库: ", "library rebuilt: ")) + std::to_string(db.Size()) + " (" + db.SourceName() + ")", NowSeconds());
+                state.SetStatus(true, std::string(Tr("$STM_LibraryRebuilt")) + std::to_string(db.Size()) + " (" + db.SourceName() + ")", NowSeconds());
             }
 
             ImGui::SameLine();
@@ -390,7 +422,7 @@ namespace stm::ui
         {
             auto& state = UiState::Get();
 
-            ImGui::Text("%s", L("部位:", "Area:"));
+            ImGui::Text("%s", Tr("$STM_Area"));
             ImGui::SameLine();
 
             for (int i = 0; i < 5; ++i) {
@@ -398,10 +430,15 @@ namespace stm::ui
                     ImGui::SameLine();
                 }
 
-                static const char* kZh[] = { "全部", "身体", "面部", "双手", "双脚" };
-                static const char* kEn[] = { "All", "Body", "Face", "Hands", "Feet" };
+                static const char* kAreaKeys[] = {
+                    "$STM_Area_All",
+                    "$STM_Area_Body",
+                    "$STM_Area_Face",
+                    "$STM_Area_Hands",
+                    "$STM_Area_Feet"
+                };
 
-                if (ImGui::RadioButton(L(kZh[i], kEn[i]), state.areaIndex == i)) {
+                if (ImGui::RadioButton(Tr(kAreaKeys[i]), state.areaIndex == i)) {
                     state.areaIndex = i;
                     state.hasSelection = false;
                     UpdatePreview("");
@@ -418,18 +455,18 @@ namespace stm::ui
             auto& db = data::TattooDatabase::Get();
 
             ImGui::BeginChild("section_panel", ImVec2(a_width, a_height), true);
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", L("1. 模组 / 分类", "1. Mods / Sections"));
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", Tr("$STM_Heading_Mods"));
             ImGui::Separator();
 
             if (!state.sectionChosen) {
-                ImGui::TextDisabled("%s", L("选一个模组后才会出现纹身列表", "pick a mod to reveal the tattoo list"));
+                ImGui::TextDisabled("%s", Tr("$STM_Hint_PickMod"));
             }
 
             // The clear button is as wide as its (large) glyph needs; the search
             // box takes whatever is left so the two never overlap.
             const float clearModWidth = ButtonWidth("x##clear_mod", 24.0f);
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - clearModWidth - ImGui::GetStyle()->ItemSpacing.x - 2.0f);
-            ImGui::InputTextWithHint("##mod_search", L("搜索模组...", "search mods..."), state.modSearch, sizeof(state.modSearch));
+            ImGui::InputTextWithHint("##mod_search", Tr("$STM_SearchMods"), state.modSearch, sizeof(state.modSearch));
             ImGui::PopItemWidth();
             ImGui::SameLine();
             if (ImGui::Button("x##clear_mod", ImVec2(clearModWidth, ButtonHeight()))) {
@@ -442,7 +479,7 @@ namespace stm::ui
             // Picking an entry selects it; clicking the current pick again
             // deselects it and takes the tattoo list away with it.
             const bool allSelected = state.sectionChosen && state.sectionFilter.empty();
-            if (ImGui::Selectable(L("[全部模组]##all_mods", "[All mods]##all_mods"), allSelected)) {
+            if (ImGui::Selectable(Tr("$STM_Filter_AllMods"), allSelected)) {
                 state.sectionChosen = !allSelected;
                 state.sectionFilter.clear();
                 state.hasSelection = false;
@@ -480,7 +517,7 @@ namespace stm::ui
             const auto& tattoos = db.Query(CurrentArea(), state.sectionFilter, state.tattooSearch);
 
             const std::string title = state.sectionFilter.empty()
-                ? std::string(L("2. 纹身列表", "2. Tattoos")) + " (" + std::to_string(tattoos.size()) + ")"
+                ? std::string(Tr("$STM_Heading_Tattoos")) + " (" + std::to_string(tattoos.size()) + ")"
                 : std::string("2. [") + state.sectionFilter + "] (" + std::to_string(tattoos.size()) + ")";
 
             ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.7f, 1.0f), "%s", title.c_str());
@@ -488,7 +525,7 @@ namespace stm::ui
 
             const float clearTatWidth = ButtonWidth("x##clear_tat", 24.0f);
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - clearTatWidth - ImGui::GetStyle()->ItemSpacing.x - 2.0f);
-            if (ImGui::InputTextWithHint("##tat_search", L("搜索纹身名称...", "search tattoos..."), state.tattooSearch, sizeof(state.tattooSearch))) {
+            if (ImGui::InputTextWithHint("##tat_search", Tr("$STM_SearchTattoos"), state.tattooSearch, sizeof(state.tattooSearch))) {
                 state.hasSelection = false;
                 UpdatePreview("");
             }
@@ -502,7 +539,7 @@ namespace stm::ui
             ImGui::Spacing();
 
             if (tattoos.empty()) {
-                ImGui::TextDisabled("%s", L("当前筛选下没有纹身。", "no tattoos match the current filter."));
+                ImGui::TextDisabled("%s", Tr("$STM_NoTattoosMatchThe"));
             } else {
                 ListClipper clipper(static_cast<int>(tattoos.size()));
                 int start = 0;
@@ -538,20 +575,20 @@ namespace stm::ui
             const auto snapshot = data::SlotSnapshot::Get().Copy();
 
             if (!snapshot.valid || snapshot.area != a_area) {
-                ImGui::TextDisabled("%s", L("正在读取槽位...", "reading slots..."));
+                ImGui::TextDisabled("%s", Tr("$STM_ReadingSlots"));
                 return;
             }
 
             for (const auto& slot : snapshot.slots) {
                 if (!slot.occupied) {
-                    std::string label = std::string(L("槽位 ", "slot ")) + std::to_string(slot.slot) + ": " + L("[空闲]", "[empty]");
+                    std::string label = std::string(Tr("$STM_Slot_2")) + std::to_string(slot.slot) + ": " + Tr("$STM_Slot_Empty");
                     ImGui::TextDisabled("%s", label.c_str());
                     continue;
                 }
 
-                std::string label = std::string(L("槽位 ", "slot ")) + std::to_string(slot.slot) + ": ";
+                std::string label = std::string(Tr("$STM_Slot_2")) + std::to_string(slot.slot) + ": ";
                 if (slot.external) {
-                    label += L("[外部占用] ", "[external] ");
+                    label += Tr("$STM_Slot_ExternalTrailing");
                 } else if (!slot.section.empty()) {
                     label += "[" + slot.section + "] ";
                 }
@@ -559,19 +596,24 @@ namespace stm::ui
 
                 ImGui::TextColored(slot.external ? ImVec4(0.9f, 0.7f, 0.3f, 1.0f) : ImVec4(0.3f, 0.9f, 0.6f, 1.0f), "%s", label.c_str());
 
-                ImGui::SameLine();
-                const std::string clearId = std::string("x##slot_") + std::to_string(slot.slot);
-                if (ImGui::SmallButton(clearId.c_str())) {
-                    ops::RemoveSlot(data::TargetState::Get().Handle(), a_area, slot.slot);
-                }
-
+                // Both actions belong to tattoos this plugin owns. An external
+                // overlay is listed (in orange) but never touched - the same rule
+                // ops::Apply follows when it refuses to overwrite one.
                 if (!slot.external) {
                     ImGui::SameLine();
-                    const std::string editId = std::string(L("编辑##editslot_", "edit##editslot_")) + std::to_string(slot.slot);
+                    const std::string clearId = std::string("x##slot_") + std::to_string(slot.slot);
+                    if (ImGui::SmallButton(clearId.c_str())) {
+                        ops::RemoveSlot(data::TargetState::Get().Handle(), a_area, slot.slot);
+                    }
+
+                    ImGui::SameLine();
+                    const std::string editId = std::string(Tr("$STM_Edit")) + std::to_string(slot.slot);
                     if (ImGui::SmallButton(editId.c_str())) {
-                        float alpha = slot.alpha;
-                        std::uint32_t color = slot.color;
-                        ops::ReadSlotAppearance(data::TargetState::Get().Resolve(), a_area, slot.slot, color, alpha);
+                        // The snapshot already carries the ledger values, so this
+                        // needs no extra JContainers round trip from the render
+                        // callback (it used to re-read them through ReadSlotAppearance).
+                        const std::uint32_t color = slot.color;
+                        const float         alpha = slot.alpha;
 
                         state.color[0] = static_cast<float>((color >> 16) & 0xFF) / 255.0f;
                         state.color[1] = static_cast<float>((color >> 8) & 0xFF) / 255.0f;
@@ -598,7 +640,7 @@ namespace stm::ui
                             render::MannequinRenderer::Get().SetBackView();
                         }
 
-                        state.SetStatus(true, std::string(L("已载入槽位 ", "loaded slot ")) + std::to_string(slot.slot), NowSeconds());
+                        state.SetStatus(true, std::string(Tr("$STM_LoadedSlot")) + std::to_string(slot.slot), NowSeconds());
                     }
                 }
             }
@@ -625,42 +667,42 @@ namespace stm::ui
                 }
 
                 // 顶部信息与快速控制
-                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s: %s", L("纹身", "Tattoo"), state.selected.name.c_str());
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s: %s", Tr("$STM_Tattoo"), state.selected.name.c_str());
                 ImGui::SameLine();
-                ImGui::TextDisabled("| %s: %s", L("模组", "Mod"), state.selected.section.c_str());
+                ImGui::TextDisabled("| %s: %s", Tr("$STM_Mod"), state.selected.section.c_str());
                 ImGui::SameLine();
-                ImGui::TextDisabled("| %s: %s", L("部位", "Part"), PreviewPartName(render::MannequinRenderer::Get().GetCurrentPart()));
+                ImGui::TextDisabled("| %s: %s", Tr("$STM_Part"), PreviewPartName(render::MannequinRenderer::Get().GetCurrentPart()));
                 ImGui::SameLine();
-                ImGui::TextDisabled("| %s: %s", L("模型", "Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
+                ImGui::TextDisabled("| %s: %s", Tr("$STM_Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
 
-                ImGui::Text("%s:", L("性别", "Sex"));
+                ImGui::Text("%s:", Tr("$STM_Sex"));
                 ImGui::SameLine();
                 int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
-                if (ImGui::RadioButton(L("女##big_fem", "Female##big_fem"), sexChoice == 0)) {
+                if (ImGui::RadioButton(Tr("$STM_Female"), sexChoice == 0)) {
                     render::MannequinRenderer::Get().InitMeshWithSex(0);
                 }
                 ImGui::SameLine();
-                if (ImGui::RadioButton(L("男##big_male", "Male##big_male"), sexChoice == 1)) {
+                if (ImGui::RadioButton(Tr("$STM_Male"), sexChoice == 1)) {
                     render::MannequinRenderer::Get().InitMeshWithSex(1);
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(L("同步目标##big_sync", "Sync Target##big_sync"))) {
+                if (ImGui::SmallButton(Tr("$STM_SyncTarget"))) {
                     render::MannequinRenderer::Get().ReloadForPlayerSex();
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(L("复位视角##big_cam_rst", "Reset Camera##big_cam_rst"))) {
+                if (ImGui::SmallButton(Tr("$STM_ResetCamera"))) {
                     render::MannequinRenderer::Get().ResetCamera();
                 }
                 ImGui::SameLine();
-                ImGui::Text(" | %s:", L("模型颜色", "Color"));
+                ImGui::Text(" | %s:", Tr("$STM_Color"));
                 ImGui::SameLine();
                 int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
-                if (ImGui::RadioButton(L("自然肉色##big_flesh", "Flesh##big_flesh"), curCol == 1)) {
+                if (ImGui::RadioButton(Tr("$STM_Flesh"), curCol == 1)) {
                     Config::Get().mannequinColor = MannequinColor::kFlesh;
                     Config::Get().Save();
                 }
                 ImGui::SameLine();
-                if (ImGui::RadioButton(L("透明全息蓝##big_holo", "Holo##big_holo"), curCol == 0)) {
+                if (ImGui::RadioButton(Tr("$STM_Holo"), curCol == 0)) {
                     Config::Get().mannequinColor = MannequinColor::kTransparent;
                     Config::Get().Save();
                 }
@@ -695,8 +737,7 @@ namespace stm::ui
                     static float s_bigLeftDragDist = 0.0f;
 
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", L("左键拖动: 旋转视角 | 右键左右拖动: 缩放 | 中键拖动: 平移\n【左键短点击】: 恢复/关闭窗口",
-                                                  "Left-drag: Rotate | Right-drag: Zoom | Middle-drag: Pan\n[Left short-click]: Restore/Close window"));
+                        ImGui::SetTooltip("%s", Tr("$STM_LeftDragRotateRight"));
 
                         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                             s_bigDraggingLeft = true;
@@ -753,12 +794,11 @@ namespace stm::ui
                 // 底部操作栏与提示
                 ImGui::Spacing();
                 const float btnW = 150.0f;
-                if (ImGui::Button(L("恢复窗口 (ESC)##restore_win", "Restore (ESC)##restore_win"), ImVec2(btnW, 0.0f))) {
+                if (ImGui::Button(Tr("$STM_RestoreEsc"), ImVec2(btnW, 0.0f))) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                ImGui::TextDisabled("%s", L("提示: 左键拖动旋转 / 右键左右拖动缩放 / 中键垂直平移 | 左键短点击画面或按 ESC 恢复窗口",
-                                           "Tip: Left-drag rotate / Right-drag zoom / Middle-drag pan | Left short-click or ESC to restore"));
+                ImGui::TextDisabled("%s", Tr("$STM_TipLeftDragRotate"));
 
                 ImGui::EndPopup();
             }
@@ -770,16 +810,16 @@ namespace stm::ui
             auto& db = data::TattooDatabase::Get();
 
             ImGui::BeginChild("inspector_panel", ImVec2(a_width, a_height), true);
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s", L("3. 属性与应用", "3. Properties & Actions"));
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s", Tr("$STM_Heading_Properties"));
             ImGui::Separator();
 
             if (state.hasSelection) {
-                ImGui::Text("%s: %s", L("纹身", "tattoo"), state.selected.name.c_str());
-                ImGui::Text("%s: %s", L("模组", "mod"), state.selected.section.c_str());
-                ImGui::Text("%s: %s", L("部位", "area"), state.selected.area.c_str());
+                ImGui::Text("%s: %s", Tr("$STM_TattooLower"), state.selected.name.c_str());
+                ImGui::Text("%s: %s", Tr("$STM_ModLower"), state.selected.section.c_str());
+                ImGui::Text("%s: %s", Tr("$STM_AreaLower"), state.selected.area.c_str());
 
                 if (!state.selected.texture.empty()) {
-                    ImGui::TextDisabled("%s: %s", L("贴图", "texture"), state.selected.texture.c_str());
+                    ImGui::TextDisabled("%s: %s", Tr("$STM_Texture"), state.selected.texture.c_str());
                 }
 
                 if (Config::Get().showPreview && state.previewTexture) {
@@ -787,28 +827,28 @@ namespace stm::ui
 
                     static bool s_view3D = true;
 
-                    ImGui::Text("%s:", L("预览模式", "Preview"));
+                    ImGui::Text("%s:", Tr("$STM_Preview"));
                     ImGui::SameLine();
-                    if (ImGui::RadioButton(L("3D 模特##v3d", "3D Mannequin##v3d"), s_view3D)) {
+                    if (ImGui::RadioButton(Tr("$STM_Tab_3DMannequin"), s_view3D)) {
                         s_view3D = true;
                         render::MannequinRenderer::Get().ClearInitFailed();
                     }
                     ImGui::SameLine();
-                    if (ImGui::RadioButton(L("2D 贴图##v2d", "2D Texture##v2d"), !s_view3D)) {
+                    if (ImGui::RadioButton(Tr("$STM_Tab_2DTexture"), !s_view3D)) {
                         s_view3D = false;
                     }
 
                     if (s_view3D) {
-                        ImGui::Text("%s:", L("模型颜色", "Model Color"));
+                        ImGui::Text("%s:", Tr("$STM_ModelColor"));
                         ImGui::SameLine();
                         int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
                         // 顺序: 先自然肉色, 再透明全息蓝
-                        if (ImGui::RadioButton(L("自然肉色##mann_flesh_q", "Natural Flesh##mann_flesh_q"), curCol == 1)) {
+                        if (ImGui::RadioButton(Tr("$STM_NaturalFlesh"), curCol == 1)) {
                             Config::Get().mannequinColor = MannequinColor::kFlesh;
                             Config::Get().Save();
                         }
                         ImGui::SameLine();
-                        if (ImGui::RadioButton(L("透明全息蓝##mann_holo_q", "Transparent Hologram##mann_holo_q"), curCol == 0)) {
+                        if (ImGui::RadioButton(Tr("$STM_TransparentHologram"), curCol == 0)) {
                             Config::Get().mannequinColor = MannequinColor::kTransparent;
                             Config::Get().Save();
                         }
@@ -828,8 +868,8 @@ namespace stm::ui
 
                         if (render::MannequinRenderer::Get().IsInitFailed()) {
                             ImGui::Spacing();
-                            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", L("3D 预览初始化失败（请检查日志）", "3D preview init failed (check log)"));
-                            if (ImGui::Button(L("点击重试##retry_3d", "Click to Retry##retry_3d"))) {
+                            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", Tr("$STM_Preview_3DInitFailed"));
+                            if (ImGui::Button(Tr("$STM_ClickToRetry"))) {
                                 render::MannequinRenderer::Get().ClearInitFailed();
                             }
                         } else if (render::MannequinRenderer::Get().IsInitialized()) {
@@ -837,7 +877,7 @@ namespace stm::ui
                             const float pHeight = 220.0f;
 
                             static const char* kEnlargedModalId = "###stm_3d_preview_modal";
-                            const std::string modalTitle = std::string(L("3D 模特预览（放大）", "3D Mannequin Preview (Enlarged)")) + kEnlargedModalId;
+                            const std::string modalTitle = std::string(Tr("$STM_Preview_3DEnlarged")) + kEnlargedModalId;
                             const bool isModalOpen = ImGui::IsPopupOpen(modalTitle.c_str());
 
                             ID3D11ShaderResourceView* srv = nullptr;
@@ -869,8 +909,7 @@ namespace stm::ui
                                 static float s_leftDragDistance = 0.0f;
 
                                 if (ImGui::IsItemHovered()) {
-                                    ImGui::SetTooltip("%s", L("左键拖动: 旋转视角 | 右键左右拖动: 缩放 | 中键拖动: 平移\n【左键短点击】: 放大窗口",
-                                                              "Left-drag: Rotate | Right-drag: Zoom | Middle-drag: Pan\n[Left short-click]: Enlarge window"));
+                                    ImGui::SetTooltip("%s", Tr("$STM_LeftDragRotateRight_2"));
 
                                     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                                         s_isDraggingLeft = true;
@@ -926,32 +965,32 @@ namespace stm::ui
 
                                 // 部位不再单独提供开关: 预览部位完全跟随上方「部位」一行,
                                 // 这里只显示当前正在预览哪一部分。
-                                ImGui::TextDisabled("%s: %s%s", L("部位", "Part"),
+                                ImGui::TextDisabled("%s: %s%s", Tr("$STM_Part"),
                                     PreviewPartName(render::MannequinRenderer::Get().GetCurrentPart()),
-                                    L("（跟随上方部位选择）", " (follows the area selected above)"));
+                                    Tr("$STM_Hint_FollowsArea"));
 
-                                ImGui::TextDisabled("%s: %s", L("模型", "Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
+                                ImGui::TextDisabled("%s: %s", Tr("$STM_Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
 
-                                ImGui::Text("%s:", L("性别", "Sex"));
+                                ImGui::Text("%s:", Tr("$STM_Sex"));
                                 ImGui::SameLine();
                                 int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
-                                if (ImGui::RadioButton(L("女##mesh_fem", "Female##mesh_fem"), sexChoice == 0)) {
+                                if (ImGui::RadioButton(Tr("$STM_Female_2"), sexChoice == 0)) {
                                     render::MannequinRenderer::Get().InitMeshWithSex(0);
                                 }
                                 ImGui::SameLine();
-                                if (ImGui::RadioButton(L("男##mesh_male", "Male##mesh_male"), sexChoice == 1)) {
+                                if (ImGui::RadioButton(Tr("$STM_Male_2"), sexChoice == 1)) {
                                     render::MannequinRenderer::Get().InitMeshWithSex(1);
                                 }
                                 ImGui::SameLine();
-                                if (ImGui::SmallButton(L("同步目标##sync_player_sex", "Sync Target##sync_player_sex"))) {
+                                if (ImGui::SmallButton(Tr("$STM_SyncTarget_2"))) {
                                     render::MannequinRenderer::Get().ReloadForPlayerSex();
                                 }
                                 ImGui::SameLine();
-                                if (ImGui::SmallButton(L("复位视角##cam_rst", "Reset Camera##cam_rst"))) {
+                                if (ImGui::SmallButton(Tr("$STM_ResetCamera_2"))) {
                                     render::MannequinRenderer::Get().ResetCamera();
                                 }
                                 ImGui::SameLine();
-                                if (ImGui::SmallButton(L("放大窗口##cam_enlarge", "Enlarge##cam_enlarge"))) {
+                                if (ImGui::SmallButton(Tr("$STM_Enlarge"))) {
                                     ImGui::OpenPopup(modalTitle.c_str());
                                 }
                             }
@@ -965,37 +1004,37 @@ namespace stm::ui
                 }
 
                 ImGui::Spacing();
-                ImGui::ColorEdit3(L("颜色", "colour"), state.color);
+                ImGui::ColorEdit3(Tr("$STM_Colour"), state.color);
 
-                ImGui::Text("%s:", L("快速调色", "quick colours"));
+                ImGui::Text("%s:", Tr("$STM_QuickColours"));
                 ImGui::SameLine();
-                if (ImGui::SmallButton(L("黑##c_black", "black##c_black"))) {
+                if (ImGui::SmallButton(Tr("$STM_Black"))) {
                     state.color[0] = state.color[1] = state.color[2] = 0.0f;
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(L("红##c_red", "red##c_red"))) {
+                if (ImGui::SmallButton(Tr("$STM_Red"))) {
                     state.color[0] = 0.8f;
                     state.color[1] = 0.1f;
                     state.color[2] = 0.1f;
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(L("金##c_gold", "gold##c_gold"))) {
+                if (ImGui::SmallButton(Tr("$STM_Gold"))) {
                     state.color[0] = 0.9f;
                     state.color[1] = 0.7f;
                     state.color[2] = 0.2f;
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(L("白##c_white", "white##c_white"))) {
+                if (ImGui::SmallButton(Tr("$STM_White"))) {
                     state.color[0] = state.color[1] = state.color[2] = 1.0f;
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(L("蓝##c_blue", "blue##c_blue"))) {
+                if (ImGui::SmallButton(Tr("$STM_Blue"))) {
                     state.color[0] = 0.2f;
                     state.color[1] = 0.4f;
                     state.color[2] = 0.9f;
                 }
 
-                ImGui::SliderFloat(L("透明度", "opacity"), &state.alpha, 0.05f, 1.0f, "%.2f");
+                ImGui::SliderFloat(Tr("$STM_Opacity"), &state.alpha, 0.05f, 1.0f, "%.2f");
 
                 // Slot picker. The chosen slot is clamped against the area the
                 // selected tattoo actually belongs to, so a stale value from
@@ -1006,35 +1045,35 @@ namespace stm::ui
                 }
 
                 const std::string comboLabel = state.targetSlot < 0
-                    ? std::string(L("自动分配空槽", "first free slot"))
-                    : std::string(L("指定槽位 ", "slot ")) + std::to_string(state.targetSlot);
+                    ? std::string(Tr("$STM_FirstFreeSlot"))
+                    : std::string(Tr("$STM_Slot")) + std::to_string(state.targetSlot);
 
-                ImGui::Text("%s:", L("目标槽位", "target slot"));
+                ImGui::Text("%s:", Tr("$STM_TargetSlot"));
                 ImGui::SameLine();
                 // Wide enough for the longest preview ("自动分配空槽"), clamped to
                 // what is actually left on the line.
                 ImVec2 slotText{};
-                ImGui::CalcTextSize(&slotText, L("自动分配空槽", "first free slot"), nullptr, true, -1.0f);
+                ImGui::CalcTextSize(&slotText, Tr("$STM_FirstFreeSlot"), nullptr, true, -1.0f);
                 const auto* style = ImGui::GetStyle();
                 const float comboWidth = std::min(slotText.x + ImGui::GetFrameHeight() + style->FramePadding.x * 2.0f + style->ItemInnerSpacing.x,
                     ImGui::GetContentRegionAvail().x);
                 ImGui::PushItemWidth(comboWidth);
                 if (ImGui::BeginCombo("##slot_combo", comboLabel.c_str())) {
-                    if (ImGui::Selectable(L("自动分配空槽##slot_auto", "first free slot##slot_auto"), state.targetSlot < 0)) {
+                    if (ImGui::Selectable(Tr("$STM_FirstFreeSlot_2"), state.targetSlot < 0)) {
                         state.targetSlot = -1;
                     }
                     const auto snap = data::SlotSnapshot::Get().Copy();
                     for (int slot = 0; slot < maxSlots; ++slot) {
-                        std::string statusText = L("[空闲]", "[empty]");
+                        std::string statusText = Tr("$STM_Slot_Empty");
                         if (snap.valid && snap.area == state.selected.area) {
                             for (const auto& s : snap.slots) {
                                 if (s.slot == slot && s.occupied) {
-                                    statusText = s.external ? L("[外部占用]", "[external]") : ("[" + s.name + "]");
+                                    statusText = s.external ? Tr("$STM_Slot_External") : ("[" + s.name + "]");
                                     break;
                                 }
                             }
                         }
-                        const std::string option = std::string(L("槽位 ", "slot ")) + std::to_string(slot) + ": " + statusText;
+                        const std::string option = std::string(Tr("$STM_Slot_2")) + std::to_string(slot) + ": " + statusText;
                         if (ImGui::Selectable((option + "##slot_opt_" + std::to_string(slot)).c_str(), state.targetSlot == slot)) {
                             state.targetSlot = slot;
                         }
@@ -1045,8 +1084,8 @@ namespace stm::ui
 
                 ImGui::Spacing();
 
-                const char* applyLabel = L("应用 / 更新颜色##apply", "Apply / update##apply");
-                const char* removeLabel = L("从目标移除##remove", "Remove##remove");
+                const char* applyLabel = Tr("$STM_ApplyUpdate");
+                const char* removeLabel = Tr("$STM_Btn_Remove");
                 const float available = ImGui::GetContentRegionAvail().x;
                 const auto  actions = LayoutButtonPair(applyLabel, removeLabel,
                     (available - 12.0f) * 0.58f, (available - 12.0f) * 0.42f);
@@ -1069,8 +1108,8 @@ namespace stm::ui
                 }
             } else {
                 ImGui::TextDisabled("%s", state.sectionChosen
-                    ? L("在中间的列表里挑一款纹身。", "pick a tattoo in the middle list.")
-                    : L("先在左侧选择一个模组，纹身列表才会出现。", "pick a mod on the left to reveal the tattoo list."));
+                    ? Tr("$STM_PickATattooIn")
+                    : Tr("$STM_Hint_SelectModFirst"));
             }
 
             ImGui::Spacing();
@@ -1079,14 +1118,14 @@ namespace stm::ui
 
             const std::string area = CurrentArea().empty() ? std::string("Body") : CurrentArea();
 
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s (%s):", L("槽位状态", "slot status"), area.c_str());
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s (%s):", Tr("$STM_SlotStatus"), area.c_str());
 
             data::SlotSnapshot::Get().Request(data::TargetState::Get().Handle(), area);
             DrawSlotList(area);
 
             ImGui::Spacing();
-            const char* clearAreaLabel = L("清空当前部位##clear_area", "Clear area##clear_area");
-            const char* clearAllLabel = L("清空全身##clear_all", "Clear everything##clear_all");
+            const char* clearAreaLabel = Tr("$STM_ClearArea");
+            const char* clearAllLabel = Tr("$STM_ClearEverything");
             const float half = (ImGui::GetContentRegionAvail().x - 12.0f) * 0.5f;
             const auto  clears = LayoutButtonPair(clearAreaLabel, clearAllLabel, half, half);
 
@@ -1101,9 +1140,15 @@ namespace stm::ui
             }
 
             ImGui::Spacing();
-            if (ImGui::CollapsingHeader(L("预设##presets", "Presets##presets"))) {
+            if (ImGui::CollapsingHeader(Tr("$STM_Presets"))) {
                 static char s_presetName[64] = "";
                 static bool s_clearFirst = true;
+
+                // Overwriting and deleting both destroy a capture with no undo,
+                // and both used to happen on a single click with nothing but a
+                // status line afterwards. They now share one confirmation popup.
+                static std::string s_pendingPreset;
+                static bool        s_pendingIsDelete = false;
 
                 auto&       store = data::PresetStore::Get();
                 static bool s_storeLoaded = false;
@@ -1112,22 +1157,26 @@ namespace stm::ui
                     store.Refresh();
                 }
 
-                ImGui::Text("%s:", L("预设名称", "preset name"));
+                ImGui::Text("%s:", Tr("$STM_PresetName"));
                 ImGui::SameLine();
                 ImGui::PushItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - 4.0f));
-                ImGui::InputTextWithHint("##preset_name", L("给这套纹身起个名字", "name this set"), s_presetName, sizeof(s_presetName));
+                ImGui::InputTextWithHint("##preset_name", Tr("$STM_NameThisSet"), s_presetName, sizeof(s_presetName));
                 ImGui::PopItemWidth();
 
-                const char* savePresetLabel = L("把当前目标存为预设##preset_save", "Save the current target##preset_save");
+                const char* savePresetLabel = Tr("$STM_SaveTheCurrentTarget");
                 if (ImGui::Button(savePresetLabel, ButtonSize(savePresetLabel, 200.0f, 28.0f))) {
                     if (s_presetName[0] == '\0') {
-                        state.SetStatus(false, L("请先输入预设名称", "enter a preset name first"), NowSeconds());
+                        state.SetStatus(false, Tr("$STM_EnterAPresetName"), NowSeconds());
+                    } else if (store.Exists(s_presetName)) {
+                        s_pendingPreset = s_presetName;
+                        s_pendingIsDelete = false;
+                        ImGui::OpenPopup("##stm_preset_confirm");
                     } else {
                         ops::CapturePreset(data::TargetState::Get().Handle(), s_presetName);
                     }
                 }
                 ImGui::SameLine();
-                const char* openPresetFolderLabel = L("打开预设目录##open_preset_dir", "Open Folder##open_preset_dir");
+                const char* openPresetFolderLabel = Tr("$STM_OpenFolder");
                 if (ImGui::Button(openPresetFolderLabel, ButtonSize(openPresetFolderLabel, 0.0f, 28.0f))) {
                     const auto dir = data::PresetStore::Get().Directory();
                     std::error_code ec;
@@ -1135,37 +1184,65 @@ namespace stm::ui
                     ::ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 }
 
-                ImGui::Checkbox(L("应用前先清空目标##preset_clear", "Clear the target before applying##preset_clear"), &s_clearFirst);
+                ImGui::Checkbox(Tr("$STM_ClearTheTargetBefore"), &s_clearFirst);
 
                 // Copy the names: deleting one refreshes the store's list.
                 const auto names = store.Names();
                 if (names.empty()) {
-                    ImGui::TextDisabled("%s", L("还没有保存过预设。", "no presets saved yet."));
+                    ImGui::TextDisabled("%s", Tr("$STM_NoPresetsSavedYet"));
                 } else {
                     for (const auto& presetName : names) {
                         ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "%s", presetName.c_str());
                         ImGui::SameLine();
-                        if (ImGui::SmallButton((std::string(L("应用##papply_", "Apply##papply_")) + presetName).c_str())) {
+                        if (ImGui::SmallButton((std::string(Tr("$STM_Apply")) + presetName).c_str())) {
                             ops::ApplyPreset(data::TargetState::Get().Handle(), presetName, s_clearFirst);
                         }
                         ImGui::SameLine();
-                        if (ImGui::SmallButton((std::string(L("删除##pdel_", "Delete##pdel_")) + presetName).c_str())) {
-                            if (store.Delete(presetName)) {
-                                state.SetStatus(true, std::string(L("已删除预设: ", "deleted preset: ")) + presetName, NowSeconds());
-                            } else {
-                                state.SetStatus(false, std::string(L("删除预设失败: ", "could not delete preset: ")) + presetName, NowSeconds());
-                            }
+                        if (ImGui::SmallButton((std::string(Tr("$STM_Btn_DeletePreset")) + presetName).c_str())) {
+                            s_pendingPreset = presetName;
+                            s_pendingIsDelete = true;
+                            ImGui::OpenPopup("##stm_preset_confirm");
                         }
                     }
                 }
 
-                ImGui::TextDisabled("%s", L("预设存放在 Data/SKSE/Plugins/SlaveTatsMenu/Presets/", "presets live in Data/SKSE/Plugins/SlaveTatsMenu/Presets/"));
+                if (ImGui::BeginPopupModal("##stm_preset_confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    const char* question = s_pendingIsDelete ? Tr("$STM_ConfirmDeletePreset") : Tr("$STM_ConfirmOverwritePreset");
+                    ImGui::TextUnformatted(question);
+                    ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.5f, 1.0f), "%s", s_pendingPreset.c_str());
+                    ImGui::Spacing();
+
+                    const char* actionLabel = s_pendingIsDelete ? Tr("$STM_Btn_DeletePreset") : Tr("$STM_Btn_Overwrite");
+                    if (ImGui::Button(actionLabel, ButtonSize(actionLabel, 120.0f, 26.0f))) {
+                        if (s_pendingIsDelete) {
+                            if (store.Delete(s_pendingPreset)) {
+                                state.SetStatus(true, std::string(Tr("$STM_DeletedPreset")) + s_pendingPreset, NowSeconds());
+                            } else {
+                                state.SetStatus(false, std::string(Tr("$STM_Status_PresetDeleteFailed")) + s_pendingPreset, NowSeconds());
+                            }
+                        } else {
+                            ops::CapturePreset(data::TargetState::Get().Handle(), s_pendingPreset);
+                        }
+                        s_pendingPreset.clear();
+                        ImGui::CloseCurrentPopup();
+                    }
+
+                    ImGui::SameLine();
+                    const char* cancelLabel = Tr("$STM_Common_Cancel");
+                    if (ImGui::Button(cancelLabel, ButtonSize(cancelLabel, 120.0f, 26.0f))) {
+                        s_pendingPreset.clear();
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                ImGui::TextDisabled("%s", Tr("$STM_PresetsLiveInData"));
             }
 
             ImGui::Spacing();
-            if (ImGui::CollapsingHeader(L("调试探针##probe", "Diagnostics##probe"))) {
-                ImGui::Text("%s: %s", L("状态", "status"), diag::IsRunning() ? L("运行中", "running") : L("已停止", "stopped"));
-                const char* probeToggleLabel = diag::IsRunning() ? L("停止##probe_toggle", "Stop##probe_toggle") : L("启动##probe_toggle", "Start##probe_toggle");
+            if (ImGui::CollapsingHeader(Tr("$STM_Diagnostics"))) {
+                ImGui::Text("%s: %s", Tr("$STM_Status"), diag::IsRunning() ? Tr("$STM_Probe_Running") : Tr("$STM_Probe_Stopped"));
+                const char* probeToggleLabel = diag::IsRunning() ? Tr("$STM_Probe_BtnStop") : Tr("$STM_Probe_BtnStart");
                 if (ImGui::Button(probeToggleLabel, ButtonSize(probeToggleLabel, 110.0f, 26.0f))) {
                     if (diag::IsRunning()) {
                         diag::Stop();
@@ -1174,18 +1251,24 @@ namespace stm::ui
                     }
                 }
                 ImGui::SameLine();
-                const char* probeSnapshotLabel = L("立即快照##probe_snap", "Snapshot now##probe_snap");
+                const char* probeSnapshotLabel = Tr("$STM_SnapshotNow");
                 if (ImGui::Button(probeSnapshotLabel, ButtonSize(probeSnapshotLabel, 156.0f, 26.0f))) {
                     diag::LogSnapshot();
-                    state.SetStatus(true, L("已请求探针快照，结果写入 SlaveTatsMenu.log", "probe snapshot requested, see SlaveTatsMenu.log"), NowSeconds());
+                    state.SetStatus(true, Tr("$STM_ProbeSnapshotRequestedSee"), NowSeconds());
                 }
-                ImGui::TextDisabled("%s", L("探针对比 SlaveTats 账本与 3D overlay 节点，只在变化时写日志。", "the probe compares the SlaveTats ledger against live overlay nodes and logs only changes."));
+                ImGui::TextDisabled("%s", Tr("$STM_TheProbeComparesThe"));
             }
 
             ImGui::EndChild();
         }
 
-        void DrawStatusLine()
+        // Results arrive from the game thread and are consumed on the render
+        // thread. This has to run every frame regardless of which tab is
+        // selected: it used to live inside DrawStatusLine, which only DrawMain
+        // called, so every operation started from the Settings tab sat in the
+        // board unseen and then flooded the status line the moment the user
+        // switched back.
+        void PumpResults()
         {
             auto& state = UiState::Get();
 
@@ -1198,6 +1281,11 @@ namespace stm::ui
                 }
                 state.SetStatus(result.ok, result.deferred, std::move(text), NowSeconds());
             }
+        }
+
+        void DrawStatusLine()
+        {
+            auto& state = UiState::Get();
 
             if (state.statusText.empty()) {
                 return;
@@ -1209,7 +1297,7 @@ namespace stm::ui
             }
 
             ImGui::Separator();
-            const char*  tag = !state.statusOk ? L("失败", "FAILED") : (state.statusDeferred ? L("延后", "DEFERRED") : L("成功", "OK"));
+            const char*  tag = !state.statusOk ? Tr("$STM_Failed") : (state.statusDeferred ? Tr("$STM_Deferred") : Tr("$STM_Ok"));
             const ImVec4 colour = !state.statusOk      ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
                                   : state.statusDeferred ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f)
                                                          : ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
@@ -1218,37 +1306,29 @@ namespace stm::ui
 
         void DrawMain()
         {
-            FontScaleScope fontScope(Config::Get().fontScale);
+            if (!OnGameThread()) {
+                return;
+            }
 
-            // One-off verification that the framework calls us on the game's main
-            // thread - every direct engine access below assumes exactly that.
-            static const std::uint32_t s_renderThread = ThisThreadId();
-            static const bool          s_threadLogged = [] {
-                SKSE::log::info("UI: rendering on thread {} (plugin load thread {})", s_renderThread, LoadThreadId());
-                if (LoadThreadId() != 0 && s_renderThread != LoadThreadId()) {
-                    SKSE::log::warn("UI: render thread differs from the load thread - direct engine access from here needs review");
-                }
-                return true;
-            }();
-            (void)s_threadLogged;
+            FontScaleScope fontScope(Config::Get().fontScale);
 
             auto& db = data::TattooDatabase::Get();
             auto& state = UiState::Get();
 
             if (!ng::Ready()) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-                ImGui::Text("%s", L("警告: 没有检测到 SlaveTatsNG 接口，所有操作都会失败。", "warning: SlaveTatsNG interface not found, every action will fail."));
+                ImGui::Text("%s", Tr("$STM_WarningSlavetatsngInterfaceNot"));
                 ImGui::PopStyleColor();
                 ImGui::Separator();
             }
 
             ImGui::TextDisabled("%s: %zu (%s)   %s: %s   %s: %d",
-                L("纹身库", "library"),
+                Tr("$STM_Library"),
                 db.Size(),
                 db.SourceName(),
-                L("JContainers", "JContainers"),
-                jc::Ready() ? L("可用", "ok") : L("不可用", "unavailable"),
-                L("已登记角色", "registered actors"),
+                Tr("$STM_Jcontainers"),
+                jc::Ready() ? Tr("$STM_Status_Ok") : Tr("$STM_Status_Unavailable"),
+                Tr("$STM_RegisteredActors"),
                 ng::KnownTargetCount());
 
             DrawTargetRow();
@@ -1262,16 +1342,27 @@ namespace stm::ui
             const float availY = ImGui::GetContentRegionAvail().y;
             const float panelHeight = std::max(380.0f, availY - 35.0f);
 
-            float col3 = available - 240.0f - 280.0f - 16.0f;
-            if (col3 < 400.0f) {
-                col3 = 400.0f;
-            }
+            // Three columns need 240 + 280 + 380 + gaps. On a narrower window the
+            // tattoo list gives up width first (down to 180) - the old fixed 400 px
+            // inspector minimum pushed the whole right column out of the window.
+            constexpr float col1Fixed = 240.0f;
+            constexpr float col2Max = 280.0f;
+            constexpr float col2Min = 180.0f;
+            constexpr float minInspector = 380.0f;
 
             const float gaps = state.sectionChosen ? 16.0f : 8.0f;
-            const float col2 = state.sectionChosen ? 280.0f : 0.0f;
+            float       col2 = state.sectionChosen ? col2Max : 0.0f;
+            float       col3 = available - col1Fixed - col2 - gaps;
+
+            if (state.sectionChosen && col3 < minInspector && col2 > col2Min) {
+                col2 = std::max(col2Min, col2 - (minInspector - col3));
+                col3 = available - col1Fixed - col2 - gaps;
+            }
+            col3 = std::max(240.0f, col3);
+
             const float col1 = state.sectionChosen
-                ? 240.0f
-                : std::max(240.0f, available - gaps - col3);
+                ? col1Fixed
+                : std::max(col1Fixed, available - gaps - col3);
 
             DrawSectionPanel(col1, panelHeight);
             if (state.sectionChosen) {
@@ -1612,46 +1703,45 @@ namespace stm::ui
 
         struct KeyChoice
         {
-            const char* nameZh;
-            const char* nameEn;
+            const char* key;
             std::uint32_t dik;
         };
 
         const KeyChoice kPopularKeys[] = {
-            { "F10 (默认)", "F10 (Default)", 0x44 },
-            { "F9", "F9", 0x43 },
-            { "F8", "F8", 0x42 },
-            { "F7", "F7", 0x41 },
-            { "F6", "F6", 0x40 },
-            { "F5", "F5", 0x3F },
-            { "F4", "F4", 0x3E },
-            { "F3", "F3", 0x3D },
-            { "F2", "F2", 0x3C },
-            { "F1", "F1", 0x3B },
-            { "F11", "F11", 0x57 },
-            { "F12", "F12", 0x58 },
-            { "Insert", "Insert", 0xD2 },
-            { "Delete", "Delete", 0xD3 },
-            { "Home", "Home", 0xC7 },
-            { "End", "End", 0xCF },
-            { "Page Up", "Page Up", 0xC9 },
-            { "Page Down", "Page Down", 0xD1 },
-            { "` (波浪号 / Tilde)", "` (Tilde)", 0x29 },
-            { "小键盘 0", "Num 0", 0x52 },
-            { "小键盘 1", "Num 1", 0x4F },
-            { "小键盘 2", "Num 2", 0x50 },
-            { "小键盘 3", "Num 3", 0x51 },
-            { "小键盘 4", "Num 4", 0x4B },
-            { "小键盘 5", "Num 5", 0x4C },
-            { "小键盘 6", "Num 6", 0x4D },
-            { "小键盘 7", "Num 7", 0x47 },
-            { "小键盘 8", "Num 8", 0x48 },
-            { "小键盘 9", "Num 9", 0x49 },
-            { "小键盘 *", "Num *", 0x37 },
-            { "小键盘 -", "Num -", 0x4A },
-            { "小键盘 +", "Num +", 0x4E },
-            { "小键盘 /", "Num /", 0xB5 },
-            { "小键盘 回车", "Num Enter", 0x9C },
+            { "$STM_Key_F10Default", 0x44 },
+            { "$STM_Key_F9", 0x43 },
+            { "$STM_Key_F8", 0x42 },
+            { "$STM_Key_F7", 0x41 },
+            { "$STM_Key_F6", 0x40 },
+            { "$STM_Key_F5", 0x3F },
+            { "$STM_Key_F4", 0x3E },
+            { "$STM_Key_F3", 0x3D },
+            { "$STM_Key_F2", 0x3C },
+            { "$STM_Key_F1", 0x3B },
+            { "$STM_Key_F11", 0x57 },
+            { "$STM_Key_F12", 0x58 },
+            { "$STM_Key_Insert", 0xD2 },
+            { "$STM_Key_Delete", 0xD3 },
+            { "$STM_Key_Home", 0xC7 },
+            { "$STM_Key_End", 0xCF },
+            { "$STM_Key_PageUp", 0xC9 },
+            { "$STM_Key_PageDown", 0xD1 },
+            { "$STM_Key_Tilde", 0x29 },
+            { "$STM_Key_Num0", 0x52 },
+            { "$STM_Key_Num1", 0x4F },
+            { "$STM_Key_Num2", 0x50 },
+            { "$STM_Key_Num3", 0x51 },
+            { "$STM_Key_Num4", 0x4B },
+            { "$STM_Key_Num5", 0x4C },
+            { "$STM_Key_Num6", 0x4D },
+            { "$STM_Key_Num7", 0x47 },
+            { "$STM_Key_Num8", 0x48 },
+            { "$STM_Key_Num9", 0x49 },
+            { "$STM_Key_NumMul", 0x37 },
+            { "$STM_Key_NumSub", 0x4A },
+            { "$STM_Key_NumAdd", 0x4E },
+            { "$STM_Key_NumDiv", 0xB5 },
+            { "$STM_Key_NumEnter", 0x9C },
         };
 
         static bool        s_forceResizeWindow = false;
@@ -1665,40 +1755,53 @@ namespace stm::ui
 
         void DrawSettings()
         {
+            if (!OnGameThread()) {
+                return;
+            }
+
             FontScaleScope fontScope(Config::Get().fontScale);
             auto&          config = Config::Get();
 
-            auto SetStatus = [&](const char* a_zh, const char* a_en) {
-                s_settingsStatus = L(a_zh, a_en);
+            auto SetStatus = [&](const char* a_msg) {
+                s_settingsStatus = a_msg;
                 s_settingsStatusTime = NowSeconds();
             };
 
-            ImGui::TextDisabled("%s", L("配置 SlaveTats 菜单的常规选项。所有修改会自动保存至 SlaveTatsMenu.ini。",
-                                       "Configure general options for SlaveTats Menu. Changes are automatically saved to SlaveTatsMenu.ini."));
+            ImGui::TextDisabled("%s", Tr("$STM_Settings_BannerText"));
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
             // 1. 界面与显示 (Interface & Display)
-            if (ImGui::CollapsingHeader(L("界面与显示", "Interface & Display"), ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(Tr("$STM_Settings_InterfaceDisplay"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Spacing();
 
-                // 语言
-                ImGui::Text("%s:", L("界面语言", "Interface Language"));
+                // 语言 (选择框/下拉选项)
+                ImGui::Text("%s:", Tr("$STM_Settings_InterfaceLanguage"));
                 ImGui::SameLine();
-                int langChoice = config.IsChinese() ? 0 : 1;
-                bool langChanged = false;
-                if (ImGui::RadioButton(L("简体中文", "Simplified Chinese"), &langChoice, 0)) {
-                    langChanged = true;
-                }
-                ImGui::SameLine();
-                if (ImGui::RadioButton("English", &langChoice, 1)) {
-                    langChanged = true;
-                }
-                if (langChanged) {
-                    config.language = (langChoice == 0) ? Language::kChinese : Language::kEnglish;
-                    config.Save();
-                    SetStatus("语言设置已更新并保存！", "Language updated and saved!");
+
+                const auto availableLangs = Translation::Get().GetAvailableLanguages();
+                const auto currentNorm = Translation::NormalizeLanguage(config.language);
+                std::string currentDisplay = Translation::GetLanguageDisplayName(currentNorm);
+
+                ImGui::SetNextItemWidth(220.0f);
+                if (ImGui::BeginCombo("##language_select", currentDisplay.c_str())) {
+                    for (const auto& lang : availableLangs) {
+                        const bool isSelected = (lang == currentNorm);
+                        std::string label = Translation::GetLanguageDisplayName(lang);
+                        if (ImGui::Selectable(label.c_str(), isSelected)) {
+                            if (lang != currentNorm) {
+                                config.language = (lang == "CHINESE") ? "zh" : (lang == "ENGLISH" ? "en" : lang);
+                                Translation::Get().Load(config.language);
+                                config.Save();
+                                SetStatus(Tr("$STM_Status_LanguageUpdated"));
+                            }
+                        }
+                        if (isSelected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
                 }
 
                 ImGui::Spacing();
@@ -1706,7 +1809,7 @@ namespace stm::ui
                 // 文字大小
                 float fScale = config.fontScale;
                 ImGui::PushItemWidth(260.0f);
-                if (ImGui::SliderFloat(L("文字大小缩放##font_scale", "Font Size Scale##font_scale"), &fScale, 0.75f, 1.50f, "%.2f x")) {
+                if (ImGui::SliderFloat(Tr("$STM_Settings_FontScaleSlider"), &fScale, 0.75f, 1.50f, "%.2f x")) {
                     config.fontScale = fScale;
                 }
                 if (ImGui::IsItemDeactivatedAfterEdit()) {
@@ -1714,10 +1817,10 @@ namespace stm::ui
                 }
                 ImGui::PopItemWidth();
                 ImGui::SameLine();
-                if (ImGui::Button(L("重置为 1.0x##reset_font", "Reset to 1.0x##reset_font"), ButtonSize(L("重置为 1.0x", "Reset to 1.0x")))) {
+                if (ImGui::Button(Tr("$STM_Settings_ResetFontBtn"), ButtonSize(Tr("$STM_Settings_ResetFontLabel")))) {
                     config.fontScale = 1.0f;
                     config.Save();
-                    SetStatus("文字大小已重置为 1.0x！", "Font size reset to 1.0x!");
+                    SetStatus(Tr("$STM_Status_FontReset"));
                 }
 
                 ImGui::Spacing();
@@ -1725,27 +1828,26 @@ namespace stm::ui
                 // 窗口背景不透明度
                 float winAlpha = config.windowAlpha;
                 ImGui::PushItemWidth(260.0f);
-                if (ImGui::SliderFloat(L("窗口背景不透明度##win_alpha", "Window Background Opacity##win_alpha"), &winAlpha, 0.20f, 1.0f, "%.2f")) {
+                if (ImGui::SliderFloat(Tr("$STM_Settings_WindowAlphaSlider"), &winAlpha, 0.20f, 1.0f, "%.2f")) {
                     config.windowAlpha = winAlpha;
                 }
                 if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
                 ImGui::PopItemWidth();
-                ImGui::TextDisabled("%s", L("说明: 调低不透明度可使浮动窗口半透明，方便透过窗口观察角色身上的着色效果。",
-                                           "Note: Lower opacity makes the window translucent to see character tattoos directly through it."));
+                ImGui::TextDisabled("%s", Tr("$STM_Settings_WindowAlphaNote"));
             }
 
             ImGui::Spacing();
 
             // 2. 默认窗口大小设置 (Default Menu Size)
-            if (ImGui::CollapsingHeader(L("默认窗口大小设置", "Window Size Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(Tr("$STM_Settings_WindowSizeHeader"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Spacing();
 
                 if (s_w <= 0.0f) s_w = config.windowWidth;
                 if (s_h <= 0.0f) s_h = config.windowHeight;
 
-                ImGui::Text("%s:", L("快速分辨率预设", "Quick Presets"));
+                ImGui::Text("%s:", Tr("$STM_QuickPresets"));
                 ImGui::SameLine();
 
                 struct SizePreset { const char* label; float w; float h; };
@@ -1768,20 +1870,20 @@ namespace stm::ui
                         config.windowHeight = s_h;
                         config.Save();
                         s_forceResizeWindow = true;
-                        SetStatus("已应用预设窗口尺寸并保存！", "Preset window size applied and saved!");
+                        SetStatus(Tr("$STM_Status_PresetSizeApplied"));
                     }
                 }
 
                 ImGui::Spacing();
 
                 ImGui::PushItemWidth(260.0f);
-                if (ImGui::SliderFloat(L("默认宽度##win_w", "Default Width##win_w"), &s_w, 800.0f, 2560.0f, "%.0f px")) {
+                if (ImGui::SliderFloat(Tr("$STM_DefaultWidth"), &s_w, 800.0f, 2560.0f, "%.0f px")) {
                     config.windowWidth = std::round(s_w);
                 }
                 if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
-                if (ImGui::SliderFloat(L("默认高度##win_h", "Default Height##win_h"), &s_h, 500.0f, 1440.0f, "%.0f px")) {
+                if (ImGui::SliderFloat(Tr("$STM_DefaultHeight"), &s_h, 500.0f, 1440.0f, "%.0f px")) {
                     config.windowHeight = std::round(s_h);
                 }
                 if (ImGui::IsItemDeactivatedAfterEdit()) {
@@ -1791,19 +1893,19 @@ namespace stm::ui
 
                 ImGui::Spacing();
 
-                if (ImGui::Button(L("应用并调整窗口尺寸##apply_sz", "Apply & Resize Window##apply_sz"), ButtonSize(L("应用并调整窗口尺寸", "Apply & Resize Window")))) {
+                if (ImGui::Button(Tr("$STM_ApplyResizeWindow_2"), ButtonSize(Tr("$STM_ApplyResizeWindow")))) {
                     config.windowWidth = std::round(s_w);
                     config.windowHeight = std::round(s_h);
                     config.Save();
                     s_forceResizeWindow = true;
-                    SetStatus("窗口尺寸已应用并保存！", "Window size applied and saved!");
+                    SetStatus(Tr("$STM_Status_WindowSizeApplied"));
                 }
 
                 if (s_lastFloatingWindowSize.x >= 600.0f && s_lastFloatingWindowSize.y >= 400.0f) {
                     ImGui::SameLine();
                     char grabLabel[64];
                     std::snprintf(grabLabel, sizeof(grabLabel), "%s (%.0fx%.0f)##grab_sz",
-                                  L("抓取当前窗口尺寸", "Grab Current Window Size"),
+                                  Tr("$STM_GrabCurrentWindowSize"),
                                   s_lastFloatingWindowSize.x, s_lastFloatingWindowSize.y);
                     if (ImGui::Button(grabLabel, ButtonSize(grabLabel))) {
                         s_w = std::round(s_lastFloatingWindowSize.x);
@@ -1811,69 +1913,66 @@ namespace stm::ui
                         config.windowWidth = s_w;
                         config.windowHeight = s_h;
                         config.Save();
-                        SetStatus("已抓取当前窗口尺寸并保存为默认！", "Current window size saved as default!");
+                        SetStatus(Tr("$STM_CurrentWindowSizeSaved"));
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", L("将浮动窗口当前被鼠标拉伸的实际尺寸保存为默认大小",
-                                                 "Save the current floating window size as default"));
+                        ImGui::SetTooltip("%s", Tr("$STM_SaveTheCurrentFloating"));
                     }
                 }
 
                 ImGui::SameLine();
-                if (ImGui::Button(L("重置默认尺寸 (1280x720)##reset_sz", "Reset to 1280x720##reset_sz"), ButtonSize(L("重置默认尺寸 (1280x720)", "Reset to 1280x720")))) {
+                if (ImGui::Button(Tr("$STM_ResetTo1280x720_2"), ButtonSize(Tr("$STM_ResetTo1280x720")))) {
                     s_w = 1280.0f;
                     s_h = 720.0f;
                     config.windowWidth = 1280.0f;
                     config.windowHeight = 720.0f;
                     config.Save();
                     s_forceResizeWindow = true;
-                    SetStatus("已重置为默认尺寸 (1280x720)！", "Reset to default size (1280x720)!");
+                    SetStatus(Tr("$STM_Status_ResetDefaultSize"));
                 }
 
-                ImGui::TextDisabled("%s", L("说明: 首次打开或点击「应用」时生效；在游戏中拖动窗口边框调整大小后，亦可点击「抓取」直接保存为默认。",
-                                           "Note: Takes effect on first open or when clicking 'Apply'; after resizing the window border, click 'Grab' to save it directly."));
+                ImGui::TextDisabled("%s", Tr("$STM_NoteTakesEffectOn"));
                 ImGui::Spacing();
             }
 
             ImGui::Spacing();
 
             // 3. 纹身预览与槽位策略 (Preview & Slot Policy)
-            if (ImGui::CollapsingHeader(L("纹身预览与槽位策略", "Preview & Slot Policy"), ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(Tr("$STM_PreviewSlotPolicy"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Spacing();
 
                 // 槽位冲突策略
-                ImGui::Text("%s:", L("槽位占用冲突策略", "Slot Conflict Policy"));
+                ImGui::Text("%s:", Tr("$STM_SlotConflictPolicy"));
                 ImGui::SameLine();
                 int policyChoice = (config.slotPolicy == SlotPolicy::kOverwrite) ? 1 : 0;
                 bool policyChanged = false;
-                if (ImGui::RadioButton(L("自动顺延至空槽位##slot_autofree", "Auto Allocate to First Free Slot##slot_autofree"), &policyChoice, 0)) {
+                if (ImGui::RadioButton(Tr("$STM_AutoAllocateToFirst"), &policyChoice, 0)) {
                     policyChanged = true;
                 }
                 ImGui::SameLine();
-                if (ImGui::RadioButton(L("直接覆盖所选槽位##slot_overwrite", "Overwrite Selected Slot##slot_overwrite"), &policyChoice, 1)) {
+                if (ImGui::RadioButton(Tr("$STM_OverwriteSelectedSlot"), &policyChoice, 1)) {
                     policyChanged = true;
                 }
                 if (policyChanged) {
                     config.slotPolicy = (policyChoice == 1) ? SlotPolicy::kOverwrite : SlotPolicy::kAutoFreeSlot;
                     config.Save();
-                    SetStatus("槽位冲突策略已更新！", "Slot policy updated!");
+                    SetStatus(Tr("$STM_SlotPolicyUpdated"));
                 }
-                ImGui::TextDisabled("%s", L("说明: 当手动指定的目标槽位已被占用时，选择自动顺延寻找空槽位，还是直接替换该槽位的现有纹身。",
-                                           "Note: Choose whether to auto-route to an open slot or replace existing ink when the target slot is occupied."));
+                ImGui::TextDisabled("%s", Tr("$STM_NoteChooseWhetherTo"));
 
                 ImGui::Spacing();
 
                 // 图案预览
                 bool showPrev = config.showPreview;
-                if (ImGui::Checkbox(L("显示纹身贴图预览##show_prev", "Show Tattoo Texture Preview##show_prev"), &showPrev)) {
+                if (ImGui::Checkbox(Tr("$STM_ShowTattooTexturePreview"), &showPrev)) {
                     config.showPreview = showPrev;
                     config.Save();
-                    SetStatus("贴图预览开关已更新！", "Preview toggle updated!");
+                    SetStatus(Tr("$STM_PreviewToggleUpdated"));
                 }
 
                 if (config.showPreview) {
                     ImGui::SameLine();
-                    ImGui::Text("%s:", L("预览尺寸预设", "Preview Sizes"));
+                    ImGui::Text("%s:", Tr("$STM_PreviewSizes"));
                     const float sizes[] = { 64.0f, 96.0f, 128.0f, 192.0f };
                     for (int i = 0; i < 4; ++i) {
                         ImGui::SameLine();
@@ -1882,13 +1981,13 @@ namespace stm::ui
                         if (ImGui::Button(sbuf)) {
                             config.previewSize = sizes[i];
                             config.Save();
-                            SetStatus("预览尺寸已更新！", "Preview size updated!");
+                            SetStatus(Tr("$STM_Status_PreviewSizeUpdated"));
                         }
                     }
 
                     ImGui::PushItemWidth(260.0f);
                     float prevSz = config.previewSize;
-                    if (ImGui::SliderFloat(L("预览图边长##prev_slider", "Preview Dimension##prev_slider"), &prevSz, 64.0f, 256.0f, "%.0f px")) {
+                    if (ImGui::SliderFloat(Tr("$STM_PreviewDimension"), &prevSz, 64.0f, 256.0f, "%.0f px")) {
                         config.previewSize = prevSz;
                     }
                     if (ImGui::IsItemDeactivatedAfterEdit()) {
@@ -1903,19 +2002,18 @@ namespace stm::ui
             ImGui::Spacing();
 
             // 4. 预设管理与实用工具 (Presets & Utilities)
-            if (ImGui::CollapsingHeader(L("预设与文件管理", "Presets & File Management"), ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(Tr("$STM_Settings_PresetsManagement"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Spacing();
 
-                const char* openExplorerLabel = L("在资源管理器中打开预设文件夹##open_presets_dir", "Open Presets Folder in Explorer##open_presets_dir");
+                const char* openExplorerLabel = Tr("$STM_Settings_OpenPresetsDirBtn");
                 if (ImGui::Button(openExplorerLabel, ButtonSize(openExplorerLabel, 260.0f, 28.0f))) {
                     const auto dir = data::PresetStore::Get().Directory();
                     std::error_code ec;
                     std::filesystem::create_directories(dir, ec);
                     ::ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                    SetStatus("已在文件资源管理器中打开预设目录！", "Presets folder opened in Explorer!");
+                    SetStatus(Tr("$STM_Status_OpenedPresetsDir"));
                 }
-                ImGui::TextDisabled("%s", L("说明: 直接打开预设 JSON 文件存放目录，方便导入外部预设、复制备份或分享给他人。",
-                                           "Note: Opens the presets directory in Windows Explorer for easy import, backup, and sharing of .json preset sets."));
+                ImGui::TextDisabled("%s", Tr("$STM_Settings_OpenPresetsDirNote"));
 
                 ImGui::Spacing();
             }
@@ -1923,9 +2021,9 @@ namespace stm::ui
             ImGui::Spacing();
 
             // 5. 快捷键设置 (Hotkey)
-            if (ImGui::CollapsingHeader(L("快捷键设置", "Hotkey Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(Tr("$STM_Settings_HotkeyHeader"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Spacing();
-                ImGui::Text("%s:", L("独立窗口呼出快捷键", "Floating Window Hotkey"));
+                ImGui::Text("%s:", Tr("$STM_Settings_FloatingHotkeyLabel"));
                 ImGui::SameLine();
 
                 const auto currentDik = config.toggleKey;
@@ -1947,7 +2045,7 @@ namespace stm::ui
                                     config.toggleKey = dik;
                                     config.Save();
                                     s_bindingHotkey = false;
-                                    SetStatus("快捷键已更新并保存！", "Hotkey updated and saved!");
+                                    SetStatus(Tr("$STM_Status_HotkeyUpdated"));
                                     break;
                                 }
                             }
@@ -1955,10 +2053,10 @@ namespace stm::ui
                     }
 
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.1f, 1.0f));
-                    ImGui::Button(L("等待按键输入... (按 ESC 取消)##bind_btn", "Press any key... (ESC to cancel)##bind_btn"), ButtonSize("", 240.0f));
+                    ImGui::Button(Tr("$STM_Settings_PressAnyKeyBtn"), ButtonSize("", 240.0f));
                     ImGui::PopStyleColor();
                     ImGui::SameLine();
-                    if (ImGui::Button(L("取消##bind_cancel", "Cancel##bind_cancel"), ButtonSize(L("取消", "Cancel")))) {
+                    if (ImGui::Button(Tr("$STM_Settings_BindCancelBtn"), ButtonSize(Tr("$STM_Common_Cancel")))) {
                         s_bindingHotkey = false;
                     }
                 } else {
@@ -1969,43 +2067,42 @@ namespace stm::ui
                         s_bindingJustStarted = true;
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", L("点击以按下键盘录入新按键", "Click to record a new key"));
+                        ImGui::SetTooltip("%s", Tr("$STM_Settings_RecordKeyTooltip"));
                     }
 
                     ImGui::SameLine();
-                    if (ImGui::Button(L("快速选择##key_quick", "Quick Select##key_quick"), ButtonSize(L("快速选择", "Quick Select")))) {
+                    if (ImGui::Button(Tr("$STM_Settings_QuickSelectKeyBtn"), ButtonSize(Tr("$STM_Settings_QuickSelectKeyLabel")))) {
                         ImGui::OpenPopup("QuickKeyPopup");
                     }
 
                     if (ImGui::BeginPopup("QuickKeyPopup")) {
                         for (const auto& choice : kPopularKeys) {
                             const bool isSelected = (config.toggleKey == choice.dik);
-                            if (ImGui::Selectable(L(choice.nameZh, choice.nameEn), isSelected)) {
+                            if (ImGui::Selectable(Tr(choice.key), isSelected)) {
                                 config.toggleKey = choice.dik;
                                 config.Save();
-                                SetStatus("快捷键已更改并保存！", "Hotkey updated and saved!");
+                                SetStatus(Tr("$STM_Status_HotkeyChanged"));
                             }
                         }
                         ImGui::EndPopup();
                     }
 
                     ImGui::SameLine();
-                    if (ImGui::Button(L("默认 (F10)##reset_hotkey", "Default (F10)##reset_hotkey"), ButtonSize(L("默认 (F10)", "Default (F10)")))) {
+                    if (ImGui::Button(Tr("$STM_Settings_ResetHotkeyBtn"), ButtonSize(Tr("$STM_Settings_ResetHotkeyLabel")))) {
                         config.toggleKey = 0x44;
                         config.Save();
-                        SetStatus("快捷键已重置为 F10！", "Hotkey reset to F10!");
+                        SetStatus(Tr("$STM_Status_HotkeyResetF10"));
                     }
                 }
 
-                ImGui::TextDisabled("%s", L("说明: 在游戏内随时按下此快捷键可切换呼出/隐藏独立的 SlaveTats 纹身管理器窗口。",
-                                           "Note: Press this hotkey anytime in-game to toggle the standalone SlaveTats Manager window."));
+                ImGui::TextDisabled("%s", Tr("$STM_Settings_HotkeyNote"));
                 ImGui::Spacing();
             }
 
             ImGui::Spacing();
 
             // 6. 其他常规设置 (Other General Settings)
-            if (ImGui::CollapsingHeader(L("其他设置", "Other Settings"))) {
+            if (ImGui::CollapsingHeader(Tr("$STM_Settings_OtherHeader"))) {
                 ImGui::Spacing();
 
                 float inkColor[3] = {
@@ -2013,25 +2110,25 @@ namespace stm::ui
                     static_cast<float>((config.defaultColor >> 8) & 0xFF) / 255.0f,
                     static_cast<float>(config.defaultColor & 0xFF) / 255.0f
                 };
-                if (ImGui::ColorEdit3(L("默认纹身墨水颜色##def_col", "Default Tattoo Ink Color##def_col"), inkColor)) {
+                if (ImGui::ColorEdit3(Tr("$STM_Settings_DefaultInkColor"), inkColor)) {
                     config.defaultColor = PackColor(inkColor);
                     config.Save();
                 }
 
-                if (ImGui::SliderFloat(L("默认纹身透明度##def_alpha", "Default Tattoo Opacity##def_alpha"), &config.defaultAlpha, 0.05f, 1.0f, "%.2f")) {
+                if (ImGui::SliderFloat(Tr("$STM_DefaultTattooOpacity"), &config.defaultAlpha, 0.05f, 1.0f, "%.2f")) {
                 }
                 if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
 
-                if (ImGui::SliderInt(L("已生效槽位刷新间隔 (毫秒)##slot_refresh", "Applied Slots Refresh Interval (ms)##slot_refresh"), &config.slotRefreshMs, 50, 1000, "%d ms")) {
+                if (ImGui::SliderInt(Tr("$STM_AppliedSlotsRefreshInterval"), &config.slotRefreshMs, 50, 1000, "%d ms")) {
                 }
                 if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
 
                 ImGui::Spacing();
-                if (ImGui::Button(L("恢复全部默认设置##reset_all", "Restore All Defaults##reset_all"), ButtonSize(L("恢复全部默认设置", "Restore All Defaults")))) {
+                if (ImGui::Button(Tr("$STM_Settings_RestoreAllBtn"), ButtonSize(Tr("$STM_Settings_RestoreAllLabel")))) {
                     config.toggleKey = 0x44;
                     // 保留当前界面语言，不强制覆盖
                     config.windowWidth = 1280.0f;
@@ -2049,12 +2146,12 @@ namespace stm::ui
                     config.probeIntervalMs = 1000;
                     config.probeArea = "Body";
                     config.probeSlots = 12;
-                    config.callTraceEnabled = true;
+                    config.callTraceEnabled = false;
                     s_w = 1280.0f;
                     s_h = 720.0f;
                     config.Save();
                     s_forceResizeWindow = true;
-                    SetStatus("已恢复全部默认设置并保存！", "All default settings restored and saved!");
+                    SetStatus(Tr("$STM_Status_AllDefaultsRestored"));
                 }
                 ImGui::Spacing();
             }
@@ -2102,8 +2199,8 @@ namespace stm::ui
         const float frameworkVersion = SKSEMenuFramework::GetMenuFrameworkVersion();
 
         SKSEMenuFramework::SetSection("SlaveTats");
-        SKSEMenuFramework::AddSectionItem(L("纹身管理器", "Tattoo Manager"), RenderMenu);
-        SKSEMenuFramework::AddSectionItem(L("设置", "Settings"), RenderSettings);
+        SKSEMenuFramework::AddSectionItem(Tr("$STM_Menu_TattooManager"), RenderMenu);
+        SKSEMenuFramework::AddSectionItem(Tr("$STM_Menu_Settings"), RenderSettings);
         g_window = SKSEMenuFramework::AddWindow(RenderWindow);
 
         if (!g_window) {
@@ -2115,11 +2212,13 @@ namespace stm::ui
 
     void __stdcall RenderMenu()
     {
+        PumpResults();
         DrawMain();
     }
 
     void __stdcall RenderSettings()
     {
+        PumpResults();
         DrawSettings();
     }
 
@@ -2133,6 +2232,10 @@ namespace stm::ui
             s_canCloseWithToggleKey = false;
             return;
         }
+
+        // Drain before any tab is drawn, so a result produced while the Settings
+        // tab was active is not stuck in the board until the user switches back.
+        PumpResults();
 
         const bool justOpened = !s_wasOpen;
         s_wasOpen = true;
@@ -2200,15 +2303,15 @@ namespace stm::ui
         ImGui::SetNextWindowBgAlpha(Config::Get().windowAlpha);
 
         bool open = true;
-        if (ImGui::Begin(L("SlaveTats 纹身管理器##stm_window", "SlaveTats Manager##stm_window"), &open, ImGuiWindowFlags_NoCollapse)) {
+        if (ImGui::Begin(Tr("$STM_Title"), &open, ImGuiWindowFlags_NoCollapse)) {
             FontScaleScope fontScope(Config::Get().fontScale);
             s_lastFloatingWindowSize = ImGui::GetWindowSize();
             if (ImGui::BeginTabBar("##stm_tabs")) {
-                if (ImGui::BeginTabItem(L("纹身管理", "Tattoo Manager"))) {
+                if (ImGui::BeginTabItem(Tr("$STM_TattooManager"))) {
                     DrawMain();
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem(L("设置", "Settings"))) {
+                if (ImGui::BeginTabItem(Tr("$STM_Menu_Settings"))) {
                     DrawSettings();
                     ImGui::EndTabItem();
                 }

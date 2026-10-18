@@ -26,6 +26,11 @@ namespace stm::data
         bool Save(const Preset& a_preset, std::string* a_error = nullptr);
         bool Delete(std::string_view a_name);
 
+        // True when Save() with this name would replace a file that already
+        // exists. Checked against the filesystem rather than Names(), so a preset
+        // dropped into the folder mid-session is caught too.
+        bool Exists(std::string_view a_name) const;
+
     private:
         PresetStore() = default;
 

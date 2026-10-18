@@ -6,10 +6,125 @@
 #include <cmath>
 #include <numbers>
 
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 namespace stm::render
 {
     namespace
     {
+        // ---- asynchronous part-mesh loading ---------------------------------
+        //
+        // NifMeshExtractor::LoadDefaultPartNif is pure filesystem work plus byte
+        // parsing: it walks a hard-coded candidate list, reads the file, and
+        // decodes BSTriShape / NiSkinPartition. It touches no engine state, which
+        // is exactly what makes it safe to move off the render thread.
+        //
+        // It is also slow enough to matter: a 3BA/CBBE femalebody_1.nif is
+        // routinely 5-15 MB and four parts are loaded back to back, so the first
+        // frame of the preview (and every sex switch) used to stall for hundreds
+        // of milliseconds. The parse now happens on a worker thread; only the
+        // D3D buffer creation stays on the render thread, where the device lives.
+
+        constexpr std::size_t kPartCount = static_cast<std::size_t>(PreviewPart::kCount);
+
+        struct MeshLoadResult
+        {
+            ExtractedMesh parts[kPartCount];
+            int           sex = 0;
+            bool          ready = false;
+        };
+
+        // One worker for the whole process, created on first use and joined in
+        // Shutdown(). Detaching instead would let a parse outlive the DLL and
+        // write into unmapped memory after SKSE unloads us.
+        std::mutex              g_meshMutex;
+        std::condition_variable g_meshCv;
+        std::thread             g_meshWorker;
+        int                     g_meshRequest = -1;   // -1 = nothing queued
+        bool                    g_meshStop = false;
+        MeshLoadResult          g_meshResult;         // consumed by the render thread
+
+        void MeshWorkerMain()
+        {
+            for (;;) {
+                int sex = 0;
+                {
+                    std::unique_lock lock(g_meshMutex);
+                    g_meshCv.wait(lock, [] { return g_meshStop || g_meshRequest >= 0; });
+                    if (g_meshStop) {
+                        return;
+                    }
+                    sex = g_meshRequest;
+                    g_meshRequest = -1;
+                }
+
+                const auto bodySex = (sex == 1) ? BodySex::kMale : BodySex::kFemale;
+
+                MeshLoadResult local;
+                local.sex = sex;
+                for (std::size_t i = 0; i < kPartCount; ++i) {
+                    local.parts[i] = NifMeshExtractor::LoadDefaultPartNif(static_cast<PreviewPart>(i), bodySex);
+                }
+                local.ready = true;
+
+                {
+                    std::scoped_lock lock(g_meshMutex);
+                    // A newer request arrived while we were parsing (the user
+                    // toggled sex again): drop this result rather than publish a
+                    // body for the wrong sex. The loop picks the newer one up.
+                    if (g_meshRequest < 0) {
+                        g_meshResult = std::move(local);
+                    }
+                }
+            }
+        }
+
+        void StartMeshWorker()
+        {
+            std::scoped_lock lock(g_meshMutex);
+            g_meshStop = false;
+            g_meshRequest = -1;
+            g_meshResult = {};
+
+            if (!g_meshWorker.joinable()) {
+                g_meshWorker = std::thread(MeshWorkerMain);
+            }
+        }
+
+        void RequestMeshLoad(int a_sex)
+        {
+            {
+                std::scoped_lock lock(g_meshMutex);
+                if (g_meshStop) {
+                    return;
+                }
+                g_meshRequest = a_sex;
+            }
+            g_meshCv.notify_one();
+        }
+
+        void StopMeshWorker()
+        {
+            std::thread worker;
+            {
+                std::scoped_lock lock(g_meshMutex);
+                g_meshStop = true;
+                g_meshRequest = -1;
+                g_meshResult = {};
+                worker = std::move(g_meshWorker);
+            }
+            g_meshCv.notify_all();
+
+            // Blocks for at most one parse. Shutdown runs on the render thread and
+            // the alternative - letting the thread outlive the DLL - is a crash.
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+
         // HLSL 内联着色器代码
         const char g_shaderSource[] = R"(
             cbuffer ConstantBuffer : register(b0)
@@ -444,7 +559,14 @@ namespace stm::render
 
         for (std::size_t i = 0; i < static_cast<std::size_t>(PreviewPart::kCount); ++i) {
             ResetCamera(static_cast<PreviewPart>(i));
+            // -1, not 0: "this slot holds nothing yet", so the first batch always
+            // builds a placeholder rather than assuming a female mesh is present.
+            _meshSex[i] = -1;
         }
+
+        // InitMesh() queues the NIF parse on this worker, so it has to exist first.
+        // StartMeshWorker() also clears any stop flag left by a previous Shutdown.
+        StartMeshWorker();
 
         if (!InitShaders()) {
             SKSE::log::error("[RENDER] Initialize failed at InitShaders");
@@ -479,6 +601,10 @@ namespace stm::render
 
     void MannequinRenderer::Shutdown()
     {
+        // Before anything else: a worker mid-parse must not be left writing into
+        // this process after the DLL is unloaded.
+        StopMeshWorker();
+
         if (_constantBuffer) { _constantBuffer->Release(); _constantBuffer = nullptr; }
         if (_inputLayout) { _inputLayout->Release(); _inputLayout = nullptr; }
         if (_pixelShader) { _pixelShader->Release(); _pixelShader = nullptr; }
@@ -486,6 +612,9 @@ namespace stm::render
 
         for (auto& pm : _partMeshes) {
             pm.Release();
+        }
+        for (auto& sex : _meshSex) {
+            sex = -1;
         }
 
         if (_samplerState) { _samplerState->Release(); _samplerState = nullptr; }
@@ -659,59 +788,19 @@ namespace stm::render
         }
 
         _currentSex = (targetSex == BodySex::kMale) ? 1 : 0;
-        const char* sexLabel = (targetSex == BodySex::kMale) ? "Male" : "Female";
 
-        // 为全部 4 个部位分别加载或生成几何体 (Body, Face, Hands, Feet)
+        // Procedural placeholders go up immediately, so the preview is never an
+        // empty box while the NIFs are being parsed. A part that already has a
+        // mesh keeps it - on a sex switch the old body stays until the new one
+        // is ready, which reads better than flashing a mannequin blob.
         bool anySuccess = false;
-        for (std::size_t i = 0; i < static_cast<std::size_t>(PreviewPart::kCount); ++i) {
-            auto part = static_cast<PreviewPart>(i);
-            std::vector<MannequinVertex> vertices;
-            std::vector<std::uint32_t>   indices;
-            std::string sourceInfo;
-
-            auto nifMesh = NifMeshExtractor::LoadDefaultPartNif(part, targetSex);
-            if (nifMesh.success && !nifMesh.vertices.empty()) {
-                vertices = std::move(nifMesh.vertices);
-                indices = std::move(nifMesh.indices);
-                bool isFallback = (targetSex == BodySex::kMale && nifMesh.sourcePath.find("female") != std::string::npos);
-                if (isFallback) {
-                    sourceInfo = "NIF (" + nifMesh.shapeName + " [Female fallback])";
-                } else {
-                    sourceInfo = std::string(sexLabel) + " NIF (" + nifMesh.shapeName + ")";
-                }
-            } else {
-                switch (part) {
-                case PreviewPart::kFace:
-                    GenerateHeadMesh(vertices, indices);
-                    sourceInfo = std::string(sexLabel) + " Head Procedural";
-                    break;
-                case PreviewPart::kHands:
-                    GenerateHandsMesh(vertices, indices);
-                    sourceInfo = std::string(sexLabel) + " Hands Procedural";
-                    break;
-                case PreviewPart::kFeet:
-                    GenerateFeetMesh(vertices, indices);
-                    sourceInfo = std::string(sexLabel) + " Feet Procedural";
-                    break;
-                case PreviewPart::kBody:
-                default:
-                    GenerateBodyMesh(vertices, indices);
-                    sourceInfo = std::string(sexLabel) + " Body Procedural";
-                    break;
-                }
-            }
-
-            ID3D11Buffer* newVB = nullptr;
-            ID3D11Buffer* newIB = nullptr;
-            if (CreateD3DBuffers(_device, vertices, indices, newVB, newIB)) {
-                _partMeshes[i].Release();
-                _partMeshes[i].vertexBuffer = newVB;
-                _partMeshes[i].indexBuffer = newIB;
-                _partMeshes[i].indexCount = static_cast<std::uint32_t>(indices.size());
-                _partMeshes[i].meshSourceInfo = std::move(sourceInfo);
+        for (std::size_t i = 0; i < kPartCount; ++i) {
+            if (_partMeshes[i].vertexBuffer && _partMeshes[i].indexBuffer && _partMeshes[i].indexCount > 0) {
                 anySuccess = true;
-            } else {
-                SKSE::log::warn("[RENDER] CreateD3DBuffers failed for preview part {}", i);
+                continue;
+            }
+            if (BuildProceduralMesh(i)) {
+                anySuccess = true;
             }
         }
 
@@ -720,7 +809,121 @@ namespace stm::render
             return false;
         }
 
+        // The real geometry is parsed off-thread and uploaded by ApplyPendingMeshes.
+        RequestMeshLoad(_currentSex);
         return true;
+    }
+
+    bool MannequinRenderer::BuildProceduralMesh(std::size_t a_index)
+    {
+        if (!_device || a_index >= kPartCount) {
+            return false;
+        }
+
+        std::vector<MannequinVertex> vertices;
+        std::vector<std::uint32_t>   indices;
+        std::string                  sourceInfo;
+
+        switch (static_cast<PreviewPart>(a_index)) {
+        case PreviewPart::kFace:
+            GenerateHeadMesh(vertices, indices);
+            sourceInfo = "Head Procedural";
+            break;
+        case PreviewPart::kHands:
+            GenerateHandsMesh(vertices, indices);
+            sourceInfo = "Hands Procedural";
+            break;
+        case PreviewPart::kFeet:
+            GenerateFeetMesh(vertices, indices);
+            sourceInfo = "Feet Procedural";
+            break;
+        case PreviewPart::kBody:
+        default:
+            GenerateBodyMesh(vertices, indices);
+            sourceInfo = "Body Procedural";
+            break;
+        }
+
+        ID3D11Buffer* newVB = nullptr;
+        ID3D11Buffer* newIB = nullptr;
+        if (!CreateD3DBuffers(_device, vertices, indices, newVB, newIB)) {
+            SKSE::log::warn("[RENDER] CreateD3DBuffers failed for procedural part {}", a_index);
+            return false;
+        }
+
+        _partMeshes[a_index].Release();
+        _partMeshes[a_index].vertexBuffer = newVB;
+        _partMeshes[a_index].indexBuffer = newIB;
+        _partMeshes[a_index].indexCount = static_cast<std::uint32_t>(indices.size());
+        _partMeshes[a_index].meshSourceInfo = std::move(sourceInfo);
+        _meshSex[a_index] = _currentSex;
+        return true;
+    }
+
+    bool MannequinRenderer::ApplyPendingMeshes()
+    {
+        MeshLoadResult result;
+        {
+            std::scoped_lock lock(g_meshMutex);
+            if (!g_meshResult.ready) {
+                return false;
+            }
+            result = std::move(g_meshResult);
+            g_meshResult = {};
+        }
+
+        // The user may have switched sex again while this batch was being
+        // uploaded; _currentSex always wins, so a stale batch is simply dropped.
+        if (result.sex != _currentSex) {
+            SKSE::log::info("[RENDER] dropping a stale mesh batch (loaded for sex {}, now {})", result.sex, _currentSex);
+            return false;
+        }
+
+        const char* sexLabel = (_currentSex == 1) ? "Male" : "Female";
+        bool        replaced = false;
+
+        for (std::size_t i = 0; i < kPartCount; ++i) {
+            auto& mesh = result.parts[i];
+            if (!mesh.success || mesh.vertices.empty() || mesh.indices.empty()) {
+                // No usable NIF for this part. If what is on screen was built for
+                // the other sex, a procedural stand-in is the honest fallback -
+                // otherwise a male preview would keep the female hands forever.
+                const bool rebuilt = (_meshSex[i] != _currentSex) && BuildProceduralMesh(i);
+                SKSE::log::info("[RENDER] preview part {} has no usable NIF, {} procedural mesh", i, rebuilt ? "fell back to the" : "kept the");
+                continue;
+            }
+
+            std::vector<MannequinVertex> vertices = std::move(mesh.vertices);
+            std::vector<std::uint32_t>   indices = std::move(mesh.indices);
+
+            std::string sourceInfo;
+            const bool isFallback = (_currentSex == 1 && mesh.sourcePath.find("female") != std::string::npos);
+            if (isFallback) {
+                sourceInfo = "NIF (" + mesh.shapeName + " [Female fallback])";
+            } else {
+                sourceInfo = std::string(sexLabel) + " NIF (" + mesh.shapeName + ")";
+            }
+
+            ID3D11Buffer* newVB = nullptr;
+            ID3D11Buffer* newIB = nullptr;
+            if (!CreateD3DBuffers(_device, vertices, indices, newVB, newIB)) {
+                SKSE::log::warn("[RENDER] CreateD3DBuffers failed for loaded part {}", i);
+                continue;
+            }
+
+            _partMeshes[i].Release();
+            _partMeshes[i].vertexBuffer = newVB;
+            _partMeshes[i].indexBuffer = newIB;
+            _partMeshes[i].indexCount = static_cast<std::uint32_t>(indices.size());
+            _partMeshes[i].meshSourceInfo = std::move(sourceInfo);
+            _meshSex[i] = _currentSex;
+            replaced = true;
+
+            SKSE::log::info("[RENDER] preview part {} <- {} ({} verts, {} tris)",
+                i, _partMeshes[i].meshSourceInfo, vertices.size(), indices.size() / 3);
+        }
+
+        return replaced;
     }
 
     bool MannequinRenderer::LoadMeshFromNif(PreviewPart a_part, const std::string& a_nifPath)
@@ -746,6 +949,9 @@ namespace stm::render
         _partMeshes[idx].indexBuffer = newIB;
         _partMeshes[idx].indexCount = static_cast<std::uint32_t>(nifMesh.indices.size());
         _partMeshes[idx].meshSourceInfo = "NIF (" + nifMesh.shapeName + ")";
+        // A manual override counts as current for the active sex: otherwise a
+        // later batch with no NIF for this part would replace it with procedural.
+        _meshSex[idx] = _currentSex;
 
         return true;
     }
@@ -1032,6 +1238,14 @@ namespace stm::render
         MannequinColor a_bodyColor,
         float a_shadeStrength)
     {
+        // Upload any mesh set the worker finished since the last frame. This is
+        // the only place D3D buffers are created for background-loaded geometry,
+        // and it runs before the buffers are read below, so a mesh that just
+        // arrived is drawn in the same frame.
+        if (_initialized && _device) {
+            ApplyPendingMeshes();
+        }
+
         auto partIdx = static_cast<std::size_t>(_currentPart);
         if (partIdx >= static_cast<std::size_t>(PreviewPart::kCount)) partIdx = 0;
 
@@ -1068,14 +1282,31 @@ namespace stm::render
         ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
         _context->PSSetShaderResources(0, 1, nullSRV);
 
-        // 备份原有渲染状态与管线绑定，确保对游戏与后续渲染零污染
-        ID3D11RenderTargetView* prevRTV = nullptr;
+        // 备份原有渲染状态与管线绑定，确保对游戏与后续渲染零污染。
+        // OM 阶段必须整表备份：ENB / Community Shaders / 后处理插件可能同时绑定多个
+        // RTV（MRT），只存 1 个的话还原时会把其余的槽位永久解绑，游戏画面直接变黑。
+        ID3D11RenderTargetView* prevRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
         ID3D11DepthStencilView* prevDSV = nullptr;
-        _context->OMGetRenderTargets(1, &prevRTV, &prevDSV);
+        _context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, prevRTVs, &prevDSV);
 
-        D3D11_VIEWPORT prevViewport{};
-        UINT numViewports = 1;
-        _context->RSGetViewports(&numViewports, &prevViewport);
+        // OMSetRenderTargets 的 ppRenderTargetViews 必须是连续数组，因此取「最后一个非空
+        // 槽位的下标 + 1」作为还原时的 NumViews，中间的 nullptr 由运行时按解绑处理。
+        UINT prevRTVCount = 0;
+        for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+            if (prevRTVs[i] != nullptr) { prevRTVCount = i + 1; }
+        }
+
+        // 视口同理，用两段式查询：先问数量，再按数量取内容。
+        // 注意 D3D11 不允许 NumViewports == 0，所以 0 个视口时干脆不改动。
+        UINT numViewports = 0;
+        _context->RSGetViewports(&numViewports, nullptr);
+        if (numViewports > D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE) {
+            numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+        }
+        D3D11_VIEWPORT prevViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+        if (numViewports > 0) {
+            _context->RSGetViewports(&numViewports, prevViewports);
+        }
 
         ID3D11RasterizerState* prevRasterState = nullptr;
         _context->RSGetState(&prevRasterState);
@@ -1175,11 +1406,9 @@ namespace stm::render
             if (hrMap == DXGI_ERROR_DEVICE_REMOVED || hrMap == DXGI_ERROR_DEVICE_RESET ||
                 _device->GetDeviceRemovedReason() != S_OK) {
                 if (numViewports > 0) {
-                    _context->RSSetViewports(numViewports, &prevViewport);
-                } else {
-                    _context->RSSetViewports(0, nullptr);
+                    _context->RSSetViewports(numViewports, prevViewports);
                 }
-                _context->OMSetRenderTargets(1, &prevRTV, prevDSV);
+                _context->OMSetRenderTargets(prevRTVCount, prevRTVCount > 0 ? prevRTVs : nullptr, prevDSV);
                 _context->RSSetState(prevRasterState);
                 _context->OMSetBlendState(prevBlendState, prevBlendFactor, prevSampleMask);
                 _context->OMSetDepthStencilState(prevDepthState, prevStencilRef);
@@ -1195,7 +1424,9 @@ namespace stm::render
                 _context->PSSetShaderResources(0, 1, &prevPSSRV);
 
                 if (prevPSSRV) prevPSSRV->Release();
-                if (prevRTV) prevRTV->Release();
+                for (auto* rtv : prevRTVs) {
+                    if (rtv) { rtv->Release(); }
+                }
                 if (prevDSV) prevDSV->Release();
                 if (prevRasterState) prevRasterState->Release();
                 if (prevBlendState) prevBlendState->Release();
@@ -1258,11 +1489,9 @@ namespace stm::render
 
         // 还原外部状态
         if (numViewports > 0) {
-            _context->RSSetViewports(numViewports, &prevViewport);
-        } else {
-            _context->RSSetViewports(0, nullptr);
+            _context->RSSetViewports(numViewports, prevViewports);
         }
-        _context->OMSetRenderTargets(1, &prevRTV, prevDSV);
+        _context->OMSetRenderTargets(prevRTVCount, prevRTVCount > 0 ? prevRTVs : nullptr, prevDSV);
         _context->RSSetState(prevRasterState);
         _context->OMSetBlendState(prevBlendState, prevBlendFactor, prevSampleMask);
         _context->OMSetDepthStencilState(prevDepthState, prevStencilRef);
@@ -1279,7 +1508,9 @@ namespace stm::render
 
         // 释放临时引用的 COM 对象
         if (prevPSSRV) prevPSSRV->Release();
-        if (prevRTV) prevRTV->Release();
+        for (auto* rtv : prevRTVs) {
+            if (rtv) { rtv->Release(); }
+        }
         if (prevDSV) prevDSV->Release();
         if (prevRasterState) prevRasterState->Release();
         if (prevBlendState) prevBlendState->Release();

@@ -82,6 +82,12 @@ if ($MoPath -and (Test-Path $MoPath)) {
         Write-Host "  -> Deployed live DLL (hot-swapped while game running) to $targetDll" -ForegroundColor Green
     }
 
+    # Deploy translations
+    $moTransDir = Join-Path $MoPath 'mods\SlaveTatsMenu\Interface\Translations'
+    New-Item -ItemType Directory -Path $moTransDir -Force | Out-Null
+    Copy-Item (Join-Path $root 'Interface\Translations\*') $moTransDir -Force
+    Write-Host "  -> Deployed translations to $moTransDir" -ForegroundColor Green
+
     $moDownloads = Join-Path $MoPath 'downloads'
     if (Test-Path $moDownloads) {
         Copy-Item $zip (Join-Path $moDownloads 'SlaveTatsMenu.zip') -Force

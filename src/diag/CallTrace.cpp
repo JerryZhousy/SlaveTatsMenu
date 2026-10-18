@@ -158,21 +158,37 @@ namespace stm::diag
                 return;
             }
 
-            a_table->simple_add_tattoo = &ShimSimpleAdd;
-            a_table->simple_remove_tattoo = &ShimSimpleRemove;
-            a_table->synchronize_tattoos = &ShimSynchronize;
-            a_table->add_tattoo = &ShimAddTattoo;
-            a_table->add_and_get_tattoo = &ShimAddAndGetTattoo;
-            a_table->remove_tattoos = &ShimRemoveTattoos;
-            a_table->remove_tattoo_from_slot = &ShimRemoveFromSlot;
+            // Only wrap entries upstream actually published. A null slot would be
+            // reached through our shim and forwarded to a null pointer.
+            int  wrapped = 0;
+            auto wrap = [&wrapped](auto& a_slot, auto a_shim) {
+                if (a_slot) {
+                    a_slot = a_shim;
+                    ++wrapped;
+                }
+            };
+
+            wrap(a_table->simple_add_tattoo, &ShimSimpleAdd);
+            wrap(a_table->simple_remove_tattoo, &ShimSimpleRemove);
+            wrap(a_table->synchronize_tattoos, &ShimSynchronize);
+            wrap(a_table->add_tattoo, &ShimAddTattoo);
+            wrap(a_table->add_and_get_tattoo, &ShimAddAndGetTattoo);
+            wrap(a_table->remove_tattoos, &ShimRemoveTattoos);
+            wrap(a_table->remove_tattoo_from_slot, &ShimRemoveFromSlot);
 
             DWORD ignored = 0;
             ::VirtualProtect(a_table, sizeof(slavetats::Addresses), previous, &ignored);
 
+            if (wrapped == 0) {
+                SKSE::log::error("[CALLTRACE] the interface table has no callable entries, nothing to trace");
+                return;
+            }
+
             g_shim.table = a_table;
             g_shim.installed = true;
 
-            SKSE::log::info("[CALLTRACE] installed on SlaveTatsNG interface table 0x{:X} (7 mutating entries wrapped)", reinterpret_cast<std::uintptr_t>(a_table));
+            SKSE::log::info("[CALLTRACE] installed on SlaveTatsNG interface table 0x{:X} ({} mutating entries wrapped)",
+                reinterpret_cast<std::uintptr_t>(a_table), wrapped);
         }
 
         void RestoreTable()
@@ -184,18 +200,44 @@ namespace stm::diag
 
             DWORD previous = 0;
             if (!::VirtualProtect(g_shim.table, sizeof(slavetats::Addresses), PAGE_READWRITE, &previous)) {
+                // Keep installed = true so a later attempt can still succeed;
+                // dropping the flag here used to leave the table patched forever
+                // with UninstallCallTrace() permanently disabled.
                 SKSE::log::error("[CALLTRACE] VirtualProtect failed (error {}), cannot restore original entries", ::GetLastError());
                 return;
             }
 
-            *g_shim.table = g_shim.original;
+            // Put back only the entries that still point at our own shims. Another
+            // plugin may have wrapped the same table after us, and assigning the
+            // whole struct back would silently unwrap it.
+            int  restored = 0;
+            auto put = [&restored](auto& a_slot, auto a_original, auto a_shim) {
+                if (a_slot == a_shim) {
+                    a_slot = a_original;
+                    ++restored;
+                }
+            };
+
+            auto* table = g_shim.table;
+            put(table->simple_add_tattoo, g_shim.original.simple_add_tattoo, &ShimSimpleAdd);
+            put(table->simple_remove_tattoo, g_shim.original.simple_remove_tattoo, &ShimSimpleRemove);
+            put(table->synchronize_tattoos, g_shim.original.synchronize_tattoos, &ShimSynchronize);
+            put(table->add_tattoo, g_shim.original.add_tattoo, &ShimAddTattoo);
+            put(table->add_and_get_tattoo, g_shim.original.add_and_get_tattoo, &ShimAddAndGetTattoo);
+            put(table->remove_tattoos, g_shim.original.remove_tattoos, &ShimRemoveTattoos);
+            put(table->remove_tattoo_from_slot, g_shim.original.remove_tattoo_from_slot, &ShimRemoveFromSlot);
 
             DWORD ignored = 0;
-            ::VirtualProtect(g_shim.table, sizeof(slavetats::Addresses), previous, &ignored);
+            ::VirtualProtect(table, sizeof(slavetats::Addresses), previous, &ignored);
 
             g_shim.table = nullptr;
             g_shim.installed = false;
-            SKSE::log::info("[CALLTRACE] restored the original interface entries");
+
+            if (restored != 7) {
+                SKSE::log::warn("[CALLTRACE] restored {} of 7 entries - another plugin wrapped the same table, leaving its shims in place", restored);
+            } else {
+                SKSE::log::info("[CALLTRACE] restored the original interface entries");
+            }
         }
     }
 

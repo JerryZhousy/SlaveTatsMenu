@@ -4,9 +4,13 @@
 #include "bridge/KnownTargets.h"
 #include "bridge/SlaveTatsNg.h"
 #include "core/Config.h"
+#include "core/Translation.h"
 #include "core/Log.h"
 #include "core/Tasks.h"
 #include "data/SlotSnapshot.h"
+#include "ops/LedgerVerify.h"
+
+#include <cmath>
 
 namespace stm::ops
 {
@@ -100,10 +104,28 @@ namespace stm::ops
             return -1;
         }
 
-        std::string LocaleText(const char* a_zh, const char* a_en)
+        // A slot whose ledger entry carries no name belongs to another overlay mod
+        // (RaceMenu, another tattoo mod, ...). Apply already refuses to overwrite
+        // those; the clearing paths have to refuse as well, otherwise "clear
+        // everything" silently deletes data this plugin does not own.
+        //
+        // Returns false when JContainers is unavailable: without it we cannot tell
+        // an external overlay from our own, and blocking every slot would be worse
+        // than the risk of clearing one.
+        bool IsExternalSlot(RE::Actor* a_actor, std::string_view a_area, int a_slot)
         {
-            return Config::Get().IsChinese() ? std::string(a_zh) : std::string(a_en);
+            if (!jc::Ready()) {
+                return false;
+            }
+
+            const auto handle = ng::GetAppliedInSlot(a_actor, a_area, a_slot);
+            if (handle <= 0) {
+                return false;
+            }
+
+            return jc::MapGetStr(jc::ObjId{ handle }, "name").empty();
         }
+
 
         // Writes colour/alpha into an applied tattoo's ledger entry and forces a
         // resynchronisation. This is the only way to restyle an existing tattoo:
@@ -122,14 +144,10 @@ namespace stm::ops
 
             ng::Synchronize(a_actor);
 
-            // Read back: the ledger is the only authority we trust.
-            const auto reread = ng::GetAppliedInSlot(a_actor, a_area, a_slot);
-            if (reread <= 0) {
-                return false;
-            }
-
-            const jc::ObjId after{ reread };
-            return jc::MapGetInt(after, "color", -1) == static_cast<std::int32_t>(a_color);
+            // Read back: the ledger is the only authority we trust. Both fields
+            // matter - verifying only the colour reported "ok" while a failed
+            // alpha write left the tattoo at the old opacity.
+            return VerifyApplied(a_actor, a_area, a_slot, a_color, a_alpha);
         }
     }
 
@@ -141,12 +159,12 @@ namespace stm::ops
 
             auto* actor = ResolveActor(a_request.actor);
             if (!actor) {
-                Push(OpResult::Fail("Apply", name, LocaleText("目标角色已失效", "target actor is gone")));
+                Push(OpResult::Fail("Apply", name, Tr("$STM_Ops_TargetActorGone")));
                 return;
             }
 
             if (!ng::EnsureReady("apply")) {
-                Push(OpResult::Fail("Apply", name, LocaleText("SlaveTatsNG 接口不可用", "SlaveTatsNG interface unavailable")));
+                Push(OpResult::Fail("Apply", name, Tr("$STM_Ops_SlaveTatsUnavailable")));
                 return;
             }
 
@@ -158,7 +176,7 @@ namespace stm::ops
 
             if (existingSlot >= 0) {
                 if (!jc::Ready()) {
-                    Push(OpResult::Fail("Recolor", name, LocaleText("JContainers 不可用，无法修改已应用的纹身", "JContainers unavailable, cannot restyle an applied tattoo")));
+                    Push(OpResult::Fail("Recolor", name, Tr("$STM_Ops_JcUnavailableRestyle")));
                     return;
                 }
 
@@ -166,15 +184,15 @@ namespace stm::ops
                 data::SlotSnapshot::Get().Invalidate();
 
                 if (!ok) {
-                    Push(OpResult::Fail("Recolor", name, LocaleText("写入账本后回查不一致", "ledger read-back mismatch")));
+                    Push(OpResult::Fail("Recolor", name, Tr("$STM_Ops_LedgerMismatch")));
                     return;
                 }
 
                 PushOutcome("Recolor",
                     name,
                     actor,
-                    LocaleText("已在 ", "already on ") + existingArea + " #" + std::to_string(existingSlot) + LocaleText(" 更新颜色/透明度", " - colour and opacity updated"),
-                    LocaleText("账本已更新，但目标 3D 未加载，同步被 SlaveTatsNG 推迟", "ledger updated, but the target's 3D is not loaded so the sync was postponed"));
+                    Tr("$STM_Ops_AlreadyOn") + existingArea + " #" + std::to_string(existingSlot) + Tr("$STM_Ops_ColorOpacityUpdated"),
+                    Tr("$STM_Ops_SyncPostponed3D"));
                 return;
             }
 
@@ -234,11 +252,22 @@ namespace stm::ops
 
                             if (landed == added && landed > 0) {
                                 const std::string target = name + " -> " + a_request.tattoo.area + " #" + std::to_string(a_request.targetSlot);
+                                const auto check = CheckSlot(actor, a_request.tattoo.area, a_request.targetSlot, a_request.color, a_request.alpha);
+                                if (!check.Ok()) {
+                                    SKSE::log::warn("Ops: '{}' landed in {} #{} but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f})",
+                                        name, a_request.tattoo.area, a_request.targetSlot, check.Reason(),
+                                        check.actualColor, static_cast<std::int32_t>(a_request.color),
+                                        check.actualAlpha, a_request.alpha);
+                                    Push(OpResult::Fail("Apply", target,
+                                        std::string(Tr("$STM_Ops_PlacedRequestedSlot")) + Tr("$STM_Ops_Comma") + Tr("$STM_Ops_LedgerMismatch")));
+                                    return;
+                                }
+
                                 PushOutcome("Apply",
                                     target,
                                     actor,
-                                    LocaleText("已写入指定槽位", "placed into the requested slot"),
-                                    LocaleText("账本已写入指定槽位，但 3D 未加载，同步被推迟", "written to the requested slot, but the 3D is not loaded so the sync was postponed"));
+                                    Tr("$STM_Ops_PlacedRequestedSlot"),
+                                    Tr("$STM_Ops_WrittenRequestedSlotPostponed"));
                                 return;
                             }
 
@@ -246,15 +275,26 @@ namespace stm::ops
                             const int actualSlot = FindSlotOfHandle(actor, a_request.tattoo.area, added);
                             if (actualSlot >= 0) {
                                 const std::string target = name + " -> " + a_request.tattoo.area + " #" + std::to_string(actualSlot);
+                                const auto check = CheckSlot(actor, a_request.tattoo.area, actualSlot, a_request.color, a_request.alpha);
+                                if (!check.Ok()) {
+                                    SKSE::log::warn("Ops: '{}' landed in {} #{} (requested #{}) but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f})",
+                                        name, a_request.tattoo.area, actualSlot, a_request.targetSlot, check.Reason(),
+                                        check.actualColor, static_cast<std::int32_t>(a_request.color),
+                                        check.actualAlpha, a_request.alpha);
+                                    Push(OpResult::Fail("Apply", target,
+                                        std::string(Tr("$STM_Ops_PlacedAutoSlot")) + Tr("$STM_Ops_Comma") + Tr("$STM_Ops_LedgerMismatch")));
+                                    return;
+                                }
+
                                 PushOutcome("Apply",
                                     target,
                                     actor,
-                                    LocaleText("指定槽位不可用，已自动写入槽位", "requested slot unavailable, placed into auto slot"),
-                                    LocaleText("账本已写入其他槽位，但 3D 未加载，同步被推迟", "written to auto slot, but the 3D is not loaded so the sync was postponed"));
+                                    Tr("$STM_Ops_PlacedAutoSlot"),
+                                    Tr("$STM_Ops_WrittenAutoSlotPostponed"));
                                 return;
                             }
 
-                            Push(OpResult::Fail("Apply", name, LocaleText("指定槽位写入后回查不到", "slot write did not appear")));
+                            Push(OpResult::Fail("Apply", name, Tr("$STM_Ops_SlotWriteDidNotAppear")));
                             return;
                         }
                     }
@@ -270,15 +310,29 @@ namespace stm::ops
             data::SlotSnapshot::Get().Invalidate();
 
             if (landed >= 0) {
+                // The high level API takes colour/alpha as arguments, so it can
+                // also report success while quietly leaving the entry at its
+                // defaults. Same read-back rule as every other write path.
+                const auto check = CheckSlot(actor, a_request.tattoo.area, landed, a_request.color, a_request.alpha);
+                if (!check.Ok()) {
+                    SKSE::log::warn("Ops: '{}' landed in {} #{} via the auto slot but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f})",
+                        name, a_request.tattoo.area, landed, check.Reason(),
+                        check.actualColor, static_cast<std::int32_t>(a_request.color),
+                        check.actualAlpha, a_request.alpha);
+                    Push(OpResult::Fail("Apply", name,
+                        std::string(Tr("$STM_Ops_AppliedToTarget")) + Tr("$STM_Ops_Comma") + Tr("$STM_Ops_LedgerMismatch")));
+                    return;
+                }
+
                 PushOutcome("Apply",
                     name,
                     actor,
-                    LocaleText("已应用到目标", "applied to the target"),
-                    LocaleText("账本已记录，但 3D 未加载，同步被推迟", "recorded in the ledger, but the 3D is not loaded so the sync was postponed"));
+                    Tr("$STM_Ops_AppliedToTarget"),
+                    Tr("$STM_Ops_RecordedLedgerPostponed"));
             } else if (status == ng::Status::kUnavailable) {
-                Push(OpResult::Fail("Apply", name, LocaleText("SlaveTatsNG 接口不可用", "SlaveTatsNG interface unavailable")));
+                Push(OpResult::Fail("Apply", name, Tr("$STM_Ops_SlaveTatsUnavailable")));
             } else {
-                Push(OpResult::Fail("Apply", name, LocaleText("调用后账本里找不到该纹身（可能名称不匹配或槽位已满）", "not present in the ledger afterwards (name mismatch or no free slot)")));
+                Push(OpResult::Fail("Apply", name, Tr("$STM_Ops_NotPresentInLedger")));
             }
         });
     }
@@ -288,7 +342,7 @@ namespace stm::ops
         PostToGameThread([a_actor, a_section, a_name]() {
             auto* actor = ResolveActor(a_actor);
             if (!actor || !ng::EnsureReady("remove")) {
-                Push(OpResult::Fail("Remove", a_name, LocaleText("目标或接口不可用", "target or interface unavailable")));
+                Push(OpResult::Fail("Remove", a_name, Tr("$STM_Ops_TargetOrInterfaceUnavailable")));
                 return;
             }
 
@@ -306,15 +360,15 @@ namespace stm::ops
             // Order matters: "not present afterwards" is only a success if it was
             // present to begin with.
             if (!wasPresent) {
-                Push(OpResult::Fail("Remove", a_name, LocaleText("目标身上没有这个纹身", "the target does not wear this tattoo")));
+                Push(OpResult::Fail("Remove", a_name, Tr("$STM_Ops_TargetDoesNotWearTattoo")));
             } else if (!stillPresent) {
                 PushOutcome("Remove",
                     a_name,
                     actor,
-                    LocaleText("已从目标移除", "removed from the target"),
-                    LocaleText("账本已移除，但 3D 未加载，同步被推迟", "removed from the ledger, but the 3D is not loaded so the sync was postponed"));
+                    Tr("$STM_Ops_RemovedFromTarget"),
+                    Tr("$STM_Ops_RemovedLedgerPostponed"));
             } else {
-                Push(OpResult::Fail("Remove", a_name, LocaleText("移除后账本里仍然存在", "still present in the ledger after removal")));
+                Push(OpResult::Fail("Remove", a_name, Tr("$STM_Ops_StillPresentAfterRemoval")));
             }
         });
     }
@@ -326,30 +380,40 @@ namespace stm::ops
             const std::string target = a_area + " #" + std::to_string(a_slot);
 
             if (!actor || !ng::EnsureReady("remove-slot")) {
-                Push(OpResult::Fail("ClearSlot", target, LocaleText("目标或接口不可用", "target or interface unavailable")));
+                Push(OpResult::Fail("ClearSlot", target, Tr("$STM_Ops_TargetOrInterfaceUnavailable")));
                 return;
             }
 
             ng::RegisterKnownTarget(actor);
 
             const auto before = ng::GetAppliedInSlot(actor, a_area, a_slot);
-            ng::RemoveFromSlot(actor, a_area, a_slot, true);
-            const auto after = ng::GetAppliedInSlot(actor, a_area, a_slot);
 
             if (before <= 0) {
                 data::SlotSnapshot::Get().Invalidate();
-                Push(OpResult::Fail("ClearSlot", target, LocaleText("该槽位本来就是空的", "that slot was already empty")));
-            } else if (after <= 0) {
+                Push(OpResult::Fail("ClearSlot", target, Tr("$STM_Ops_SlotAlreadyEmpty")));
+                return;
+            }
+
+            // Never clear an overlay another mod owns - same rule Apply follows.
+            if (IsExternalSlot(actor, a_area, a_slot)) {
+                Push(OpResult::Fail("ClearSlot", target, Tr("$STM_Ops_SlotIsExternal")));
+                return;
+            }
+
+            ng::RemoveFromSlot(actor, a_area, a_slot, true);
+            const auto after = ng::GetAppliedInSlot(actor, a_area, a_slot);
+
+            if (after <= 0) {
                 ng::Synchronize(actor);
                 data::SlotSnapshot::Get().Invalidate();
                 PushOutcome("ClearSlot",
                     target,
                     actor,
-                    LocaleText("槽位已清空", "slot cleared"),
-                    LocaleText("槽位已清空，但 3D 未加载，同步被推迟", "slot cleared in the ledger, but the 3D is not loaded so the sync was postponed"));
+                    Tr("$STM_Ops_SlotCleared"),
+                    Tr("$STM_Ops_SlotClearedPostponed"));
             } else {
                 data::SlotSnapshot::Get().Invalidate();
-                Push(OpResult::Fail("ClearSlot", target, LocaleText("清除后槽位仍被占用", "slot is still occupied")));
+                Push(OpResult::Fail("ClearSlot", target, Tr("$STM_Ops_SlotStillOccupied")));
             }
         });
     }
@@ -359,7 +423,7 @@ namespace stm::ops
         PostToGameThread([a_actor, a_area]() {
             auto* actor = ResolveActor(a_actor);
             if (!actor || !ng::EnsureReady("clear-area")) {
-                Push(OpResult::Fail("ClearArea", a_area, LocaleText("目标或接口不可用", "target or interface unavailable")));
+                Push(OpResult::Fail("ClearArea", a_area, Tr("$STM_Ops_TargetOrInterfaceUnavailable")));
                 return;
             }
 
@@ -367,8 +431,13 @@ namespace stm::ops
 
             const int maxSlots = ng::MaxSlots(a_area);
             int       cleared = 0;
+            int       skipped = 0;
             for (int slot = 0; slot < maxSlots; ++slot) {
                 if (ng::GetAppliedInSlot(actor, a_area, slot) > 0) {
+                    if (IsExternalSlot(actor, a_area, slot)) {
+                        ++skipped;
+                        continue;
+                    }
                     if (ng::RemoveFromSlot(actor, a_area, slot, true) == ng::Status::kOk) {
                         ++cleared;
                     }
@@ -378,14 +447,20 @@ namespace stm::ops
             ng::Synchronize(actor);
             data::SlotSnapshot::Get().Invalidate();
 
+            const std::string skippedNote = skipped > 0
+                ? Tr("$STM_Ops_SkippedExternalPrefix") + std::to_string(skipped) + Tr("$STM_Ops_SkippedExternalSuffix")
+                : std::string();
+
             if (cleared > 0) {
                 PushOutcome("ClearArea",
                     a_area,
                     actor,
-                    LocaleText("已清空 ", "cleared ") + std::to_string(cleared) + LocaleText(" 个槽位", " slot(s)"),
-                    LocaleText("已清空 ", "cleared ") + std::to_string(cleared) + LocaleText(" 个槽位，但 3D 未加载，同步被推迟", " slot(s) in the ledger, but the 3D is not loaded so the sync was postponed"));
+                    Tr("$STM_Ops_ClearedPrefix") + std::to_string(cleared) + Tr("$STM_Ops_SlotsSuffix") + skippedNote,
+                    Tr("$STM_Ops_ClearedPrefix") + std::to_string(cleared) + Tr("$STM_Ops_ClearedSlotsPostponed") + skippedNote);
+            } else if (skipped > 0) {
+                Push(OpResult::Fail("ClearArea", a_area, Tr("$STM_Ops_OnlyExternalOverlays")));
             } else {
-                Push(OpResult::Fail("ClearArea", a_area, LocaleText("该部位没有可清空的纹身", "nothing to clear in this area")));
+                Push(OpResult::Fail("ClearArea", a_area, Tr("$STM_Ops_NothingToClearInArea")));
             }
         });
     }
@@ -395,17 +470,22 @@ namespace stm::ops
         PostToGameThread([a_actor]() {
             auto* actor = ResolveActor(a_actor);
             if (!actor || !ng::EnsureReady("clear-all")) {
-                Push(OpResult::Fail("ClearAll", "-", LocaleText("目标或接口不可用", "target or interface unavailable")));
+                Push(OpResult::Fail("ClearAll", "-", Tr("$STM_Ops_TargetOrInterfaceUnavailable")));
                 return;
             }
 
             ng::RegisterKnownTarget(actor);
 
             int cleared = 0;
+            int skipped = 0;
             for (const auto area : kAreas) {
                 const int maxSlots = ng::MaxSlots(area);
                 for (int slot = 0; slot < maxSlots; ++slot) {
                     if (ng::GetAppliedInSlot(actor, area, slot) > 0) {
+                        if (IsExternalSlot(actor, area, slot)) {
+                            ++skipped;
+                            continue;
+                        }
                         if (ng::RemoveFromSlot(actor, area, slot, true) == ng::Status::kOk) {
                             ++cleared;
                         }
@@ -417,14 +497,20 @@ namespace stm::ops
             data::SlotSnapshot::Get().Invalidate();
 
             const std::string label = ActorLabel(actor);
+            const std::string skippedNote = skipped > 0
+                ? Tr("$STM_Ops_SkippedExternalPrefix") + std::to_string(skipped) + Tr("$STM_Ops_SkippedExternalSuffix")
+                : std::string();
+
             if (cleared > 0) {
                 PushOutcome("ClearAll",
                     label,
                     actor,
-                    LocaleText("已清除全身 ", "cleared ") + std::to_string(cleared) + LocaleText(" 个纹身", " tattoo(s)"),
-                    LocaleText("账本已清除 ", "cleared ") + std::to_string(cleared) + LocaleText(" 个纹身，但 3D 未加载，同步被推迟", " tattoo(s) in the ledger, but the 3D is not loaded so the sync was postponed"));
+                    Tr("$STM_Ops_ClearedAllPrefix") + std::to_string(cleared) + Tr("$STM_Ops_TattoosSuffix") + skippedNote,
+                    Tr("$STM_Cleared") + std::to_string(cleared) + Tr("$STM_Ops_ClearedAllPostponed") + skippedNote);
+            } else if (skipped > 0) {
+                Push(OpResult::Fail("ClearAll", label, Tr("$STM_Ops_OnlyExternalOverlays")));
             } else {
-                Push(OpResult::Fail("ClearAll", label, LocaleText("目标身上没有纹身", "the target wears no tattoos")));
+                Push(OpResult::Fail("ClearAll", label, Tr("$STM_Ops_TargetWearsNoTattoos")));
             }
         });
     }
@@ -434,7 +520,7 @@ namespace stm::ops
         PostToGameThread([a_actor]() {
             auto* actor = ResolveActor(a_actor);
             if (!actor || !ng::EnsureReady("sync")) {
-                Push(OpResult::Fail("Sync", "-", LocaleText("目标或接口不可用", "target or interface unavailable")));
+                Push(OpResult::Fail("Sync", "-", Tr("$STM_Ops_TargetOrInterfaceUnavailable")));
                 return;
             }
 
@@ -444,29 +530,12 @@ namespace stm::ops
             data::SlotSnapshot::Get().Invalidate();
 
             if (status != ng::Status::kOk) {
-                Push(OpResult::Fail("Sync", ActorLabel(actor), LocaleText("同步调用返回失败", "synchronize call reported failure")));
+                Push(OpResult::Fail("Sync", ActorLabel(actor), Tr("$STM_Ops_SyncCallFailed")));
             } else if (SyncDeferred(actor)) {
-                Push(OpResult::Deferred("Sync", ActorLabel(actor), LocaleText("目标 3D 未加载，SlaveTatsNG 会直接放弃这次同步", "the target's 3D is not loaded, SlaveTatsNG will skip this sync entirely")));
+                Push(OpResult::Deferred("Sync", ActorLabel(actor), Tr("$STM_Ops_SyncSkipped3DNotLoaded")));
             } else {
-                Push(OpResult::Ok("Sync", ActorLabel(actor), LocaleText("已请求强制同步（账本无变化时会立即跳过）", "synchronisation requested (skipped immediately when the ledger is clean)")));
+                Push(OpResult::Ok("Sync", ActorLabel(actor), Tr("$STM_Ops_SyncRequestedClean")));
             }
         });
-    }
-
-    bool ReadSlotAppearance(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t& a_color, float& a_alpha)
-    {
-        if (!a_actor || !jc::Ready()) {
-            return false;
-        }
-
-        const auto handle = ng::GetAppliedInSlot(a_actor, a_area, a_slot);
-        if (handle <= 0) {
-            return false;
-        }
-
-        const jc::ObjId obj{ handle };
-        a_color = static_cast<std::uint32_t>(jc::MapGetInt(obj, "color", 0));
-        a_alpha = 1.0f - jc::MapGetFlt(obj, "invertedAlpha", 0.0f);
-        return true;
     }
 }

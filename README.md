@@ -62,7 +62,8 @@ Probe = 0               ; diagnostic probe, writes only changes to the log
 ProbeIntervalMs = 1000
 ProbeArea = Body
 ProbeSlots = 12
-CallTrace = 1           ; log which module called each mutating SlaveTatsNG function
+CallTrace = 0           ; log which module called each mutating SlaveTatsNG function
+                        ; (opt-in: it patches another plugin's read-only table)
 ```
 
 Presets are plain JSON, one file per preset, in `Data/SKSE/Plugins/SlaveTatsMenu/Presets/`. They can be edited by hand or handed to someone else.

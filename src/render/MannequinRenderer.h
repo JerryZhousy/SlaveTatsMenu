@@ -106,12 +106,24 @@ namespace stm::render
         // 支持重载指定的 NIF 网格与根据主角性别重载
         bool LoadMeshFromNif(PreviewPart a_part, const std::string& a_nifPath);
         bool LoadMeshFromNif(const std::string& a_nifPath);
+
+        // These two return immediately. They put procedural placeholders up and
+        // queue the real NIF parse on a worker thread; RenderFrame uploads the
+        // result when it arrives. Parsing 5-15 MB of BSTriShape inline used to
+        // stall the first preview frame and every sex switch.
         bool ReloadForPlayerSex();
         bool InitMeshWithSex(int a_sex);
 
     private:
         MannequinRenderer() = default;
-        ~MannequinRenderer() { Shutdown(); }
+
+        // Deliberately does NOT release the D3D resources. main.cpp registers an
+        // atexit handler that calls Shutdown() while the D3D runtime is still
+        // alive; a function-local static's destructor runs later, during CRT
+        // teardown, and releasing a device that late is exactly the kind of
+        // thing that turns a clean exit into a crash-on-quit. The atexit handler
+        // is the single owner of that job.
+        ~MannequinRenderer() = default;
 
         int _currentSex = 0;
         PreviewPart _currentPart = PreviewPart::kBody;
@@ -119,6 +131,16 @@ namespace stm::render
         bool InitShaders();
         bool InitMesh();
         bool InitBuffers();
+
+        // Uploads a mesh set finished by the loading worker. Called from
+        // RenderFrame, because creating D3D buffers has to happen on the thread
+        // that owns the device. Returns true when at least one part was replaced.
+        bool ApplyPendingMeshes();
+
+        // Builds the stand-in geometry for one part and uploads it. Used when no
+        // NIF is available, and as the immediate placeholder before the worker
+        // returns. Records which sex the mesh was built for.
+        bool BuildProceduralMesh(std::size_t a_index);
 
         bool _initialized = false;
         bool _initFailed = false;
@@ -158,5 +180,11 @@ namespace stm::render
         // 4个部位的网格缓冲与独立相机状态 (Body, Face, Hands, Feet)
         PartMeshBuffer _partMeshes[static_cast<std::size_t>(PreviewPart::kCount)];
         CameraState    _cameras[static_cast<std::size_t>(PreviewPart::kCount)];
+
+        // Which sex each part's current mesh was built for, or -1 when the slot
+        // holds nothing. Needed because a sex switch no longer rebuilds the meshes
+        // immediately: without this, a part with no NIF for the new sex would keep
+        // the old sex's geometry on screen indefinitely.
+        int _meshSex[static_cast<std::size_t>(PreviewPart::kCount)]{};
     };
 }

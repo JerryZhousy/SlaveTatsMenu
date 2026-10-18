@@ -263,20 +263,40 @@ namespace stm::render
         if (endPos <= 0 || static_cast<std::size_t>(endPos) < sizeof(NifHeaderPrefix)) {
             return result;
         }
-        std::size_t fileSize = static_cast<std::size_t>(endPos);
+        const std::size_t fileSize = static_cast<std::size_t>(endPos);
+
+        // The path comes from a texture/armour record, not from us: a broken
+        // record or a deliberately malformed file can report any size at all.
+        // Refusing early is cheaper than allocating whatever it claims.
+        constexpr std::size_t kMaxNifSize = 64u * 1024u * 1024u;
+        if (fileSize > kMaxNifSize) {
+            SKSE::log::warn("[RENDER] NifMeshExtractor: {} claims {} bytes, refusing to load (limit {})",
+                a_filePath, fileSize, kMaxNifSize);
+            return result;
+        }
+
         file.seekg(0, std::ios::beg);
 
         std::vector<std::uint8_t> buffer(fileSize);
-        file.read(reinterpret_cast<char*>(buffer.data()), fileSize);
+        file.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(fileSize));
+        if (static_cast<std::size_t>(file.gcount()) != fileSize) {
+            SKSE::log::warn("[RENDER] NifMeshExtractor: short read on {} ({} of {} bytes)",
+                a_filePath, file.gcount(), fileSize);
+            return result;
+        }
 
-        const auto* prefix = reinterpret_cast<const NifHeaderPrefix*>(buffer.data());
-        if (std::memcmp(prefix->magic, "Gamebryo File Format, Version 20.2.0.7\n", 39) != 0) {
+        // memcpy, not a reinterpret_cast: vector's buffer is only guaranteed to
+        // be aligned for uint8_t, and the struct has 32-bit fields.
+        NifHeaderPrefix prefix{};
+        std::memcpy(&prefix, buffer.data(), sizeof(prefix));
+
+        if (std::memcmp(prefix.magic, "Gamebryo File Format, Version 20.2.0.7\n", 39) != 0) {
             return result;
         }
 
         std::size_t pos = sizeof(NifHeaderPrefix);
-        const std::uint32_t numBlocks = prefix->numBlocks;
-        const std::uint32_t bsVersion = prefix->bsVersion;
+        const std::uint32_t numBlocks = prefix.numBlocks;
+        const std::uint32_t bsVersion = prefix.bsVersion;
 
         // 安全防范：每个 Block 至少需要 2 字节类型索引 + 4 字节大小，numBlocks 绝不可能超出文件上限
         if (static_cast<std::uint64_t>(numBlocks) * 6ULL > fileSize) {

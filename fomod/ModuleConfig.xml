@@ -6,6 +6,7 @@
     <!-- The plugin itself is not optional: SKSE\Plugins\SlaveTatsMenu.dll plus the
          default SlaveTatsMenu.ini. The language step below overwrites that INI. -->
     <folder source="SKSE" priority="0" />
+    <folder source="Interface" priority="0" />
     <!-- Notices for everything the DLL statically links, plus the interfaces it
          compiles against. They install next to SKSE/ at the mod's root. -->
     <folder source="LICENSES" priority="0" />

@@ -104,9 +104,17 @@ extern "C" DLLEXPORT constinit auto SKSEPlugin_Version = []() {
 
 extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface* a_skse, SKSE::PluginInfo* a_info)
 {
+    // SKSE packs a plugin version as major/minor/patch in the top three bytes.
+    // These come from CMakeLists.txt (project VERSION), so the value SKSE shows
+    // and the value in the log can no longer drift apart.
+    constexpr std::uint32_t kPluginVersion =
+        (static_cast<std::uint32_t>(STM_VERSION_MAJOR) << 24) |
+        (static_cast<std::uint32_t>(STM_VERSION_MINOR) << 16) |
+        (static_cast<std::uint32_t>(STM_VERSION_PATCH) << 8);
+
     a_info->infoVersion = SKSE::PluginInfo::kVersion;
     a_info->name = "SlaveTatsMenu";
-    a_info->version = 1;
+    a_info->version = kPluginVersion;
 
     if (a_skse->IsEditor()) {
         return false;
@@ -126,7 +134,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 
     stm::LoadThreadId() = stm::ThisThreadId();
 
-    SKSE::log::info("SlaveTatsMenu {} loaded (game {}, load thread {})", "1.1.0", a_skse->RuntimeVersion().string(), stm::LoadThreadId());
+    SKSE::log::info("SlaveTatsMenu {} loaded (game {}, load thread {})", STM_VERSION_STRING, a_skse->RuntimeVersion().string(), stm::LoadThreadId());
 
     const auto messaging = SKSE::GetMessagingInterface();
     if (!messaging) {

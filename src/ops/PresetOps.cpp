@@ -4,12 +4,15 @@
 #include "bridge/KnownTargets.h"
 #include "bridge/SlaveTatsNg.h"
 #include "core/Config.h"
+#include "core/Translation.h"
 #include "core/Log.h"
 #include "core/Tasks.h"
 #include "data/PresetStore.h"
 #include "data/SlotSnapshot.h"
+#include "ops/LedgerVerify.h"
 
 #include <ctime>
+#include <vector>
 
 namespace stm::ops
 {
@@ -29,10 +32,7 @@ namespace stm::ops
             return a_handle.get().get();
         }
 
-        std::string LocaleText(const char* a_zh, const char* a_en)
-        {
-            return Config::Get().IsChinese() ? std::string(a_zh) : std::string(a_en);
-        }
+
 
         void Push(OpResult a_result)
         {
@@ -77,7 +77,7 @@ namespace stm::ops
             return buffer;
         }
 
-        int FindAppliedSlot(RE::Actor* a_actor, std::string_view a_section, std::string_view a_name)
+        int FindAppliedSlot(RE::Actor* a_actor, std::string_view a_section, std::string_view a_name, std::string* a_outArea = nullptr)
         {
             for (const auto area : kAreas) {
                 const int maxSlots = ng::MaxSlots(area);
@@ -89,6 +89,9 @@ namespace stm::ops
 
                     const jc::ObjId obj{ handle };
                     if (jc::MapGetStr(obj, "name") == a_name && jc::MapGetStr(obj, "section") == a_section) {
+                        if (a_outArea) {
+                            *a_outArea = std::string(area);
+                        }
                         return slot;
                     }
                 }
@@ -114,12 +117,12 @@ namespace stm::ops
         PostToGameThread([a_actor, a_presetName = std::move(a_presetName)]() {
             auto* actor = ResolveActor(a_actor);
             if (!actor) {
-                Push(OpResult::Fail("PresetSave", a_presetName, LocaleText("目标角色已失效", "target actor is gone")));
+                Push(OpResult::Fail("PresetSave", a_presetName, Tr("$STM_Ops_TargetActorGone")));
                 return;
             }
 
             if (!ng::EnsureReady("preset-capture") || !jc::Ready()) {
-                Push(OpResult::Fail("PresetSave", a_presetName, LocaleText("需要 SlaveTatsNG 与 JContainers 才能读取纹身", "SlaveTatsNG and JContainers are both required to read the tattoos")));
+                Push(OpResult::Fail("PresetSave", a_presetName, Tr("$STM_Ops_ReqSlaveTatsAndJc")));
                 return;
             }
 
@@ -155,19 +158,19 @@ namespace stm::ops
             }
 
             if (preset.Empty()) {
-                Push(OpResult::Fail("PresetSave", a_presetName, LocaleText("目标身上没有可保存的纹身", "the target wears no tattoos to save")));
+                Push(OpResult::Fail("PresetSave", a_presetName, Tr("$STM_Ops_NoTattoosToSave")));
                 return;
             }
 
             std::string error;
             if (!data::PresetStore::Get().Save(preset, &error)) {
-                Push(OpResult::Fail("PresetSave", a_presetName, LocaleText("写入预设失败: ", "could not write the preset: ") + error));
+                Push(OpResult::Fail("PresetSave", a_presetName, Tr("$STM_Ops_PresetWriteFailed") + error));
                 return;
             }
 
             Push(OpResult::Ok("PresetSave",
                 data::SanitizePresetName(a_presetName),
-                LocaleText("已保存 ", "saved ") + std::to_string(preset.Count()) + LocaleText(" 个纹身（来自 ", " tattoo(s) from ") + preset.sourceActor + "）"));
+                Tr("$STM_Saved") + std::to_string(preset.Count()) + Tr("$STM_Ops_TattoosFromSection") + preset.sourceActor + Tr("$STM_Ops_CloseParen")));
         });
     }
 
@@ -176,19 +179,19 @@ namespace stm::ops
         PostToGameThread([a_actor, a_presetName = std::move(a_presetName), a_clearFirst]() {
             auto* actor = ResolveActor(a_actor);
             if (!actor) {
-                Push(OpResult::Fail("PresetApply", a_presetName, LocaleText("目标角色已失效", "target actor is gone")));
+                Push(OpResult::Fail("PresetApply", a_presetName, Tr("$STM_Ops_TargetActorGone")));
                 return;
             }
 
             if (!ng::EnsureReady("preset-apply")) {
-                Push(OpResult::Fail("PresetApply", a_presetName, LocaleText("SlaveTatsNG 接口不可用", "SlaveTatsNG interface unavailable")));
+                Push(OpResult::Fail("PresetApply", a_presetName, Tr("$STM_Ops_SlaveTatsUnavailable")));
                 return;
             }
 
             data::Preset preset;
             std::string  error;
             if (!data::PresetStore::Get().Load(a_presetName, preset, &error)) {
-                Push(OpResult::Fail("PresetApply", a_presetName, LocaleText("读取预设失败: ", "could not read the preset: ") + error));
+                Push(OpResult::Fail("PresetApply", a_presetName, Tr("$STM_Ops_PresetReadFailed") + error));
                 return;
             }
 
@@ -214,6 +217,22 @@ namespace stm::ops
             int applied = 0;
             int failed = 0;
             int exactSlot = 0;
+
+            // Where each entry ended up, so the read-back after the single batch
+            // synchronisation can confirm colour and opacity actually stuck.
+            // add_and_get_tattoo reports success without writing either field, and
+            // the batch sync rebuilds the ledger objects, so the object id handed
+            // back by the add call is useless for verification.
+            struct Placed
+            {
+                std::string   section;
+                std::string   name;
+                std::string   area;
+                int           slot = -1;
+                std::uint32_t color = 0;
+                float         alpha = 1.0f;
+            };
+            std::vector<Placed> placed;
 
             for (const auto& entry : preset.entries) {
                 const int  maxSlots = ng::MaxSlots(entry.area);
@@ -243,8 +262,12 @@ namespace stm::ops
 
                             // Report the truth: when the requested slot is already
                             // taken upstream silently places the tattoo elsewhere.
-                            if (wantSlot && FindSlotOfHandle(actor, entry.area, added) == slot) {
-                                ++exactSlot;
+                            const int landedSlot = FindSlotOfHandle(actor, entry.area, added);
+                            if (landedSlot >= 0) {
+                                placed.push_back({ entry.section, entry.name, entry.area, landedSlot, entry.color, entry.alpha });
+                                if (wantSlot && landedSlot == slot) {
+                                    ++exactSlot;
+                                }
                             }
                         }
                     }
@@ -253,9 +276,13 @@ namespace stm::ops
                 // Fallback: the high level API cannot target a slot, but it is the
                 // only route left when the query returns nothing (cache not built).
                 if (!done) {
-                    if (ng::SimpleAddTattoo(actor, entry.section, entry.name, entry.color, entry.alpha, false) == ng::Status::kOk
-                        && FindAppliedSlot(actor, entry.section, entry.name) >= 0) {
-                        done = true;
+                    if (ng::SimpleAddTattoo(actor, entry.section, entry.name, entry.color, entry.alpha, false) == ng::Status::kOk) {
+                        std::string landedArea;
+                        const int   landedSlot = FindAppliedSlot(actor, entry.section, entry.name, &landedArea);
+                        if (landedSlot >= 0) {
+                            done = true;
+                            placed.push_back({ entry.section, entry.name, landedArea, landedSlot, entry.color, entry.alpha });
+                        }
                     }
                 }
 
@@ -272,20 +299,41 @@ namespace stm::ops
             ng::Synchronize(actor);
             data::SlotSnapshot::Get().Invalidate();
 
-            std::string detail = LocaleText("应用 ", "applied ") + std::to_string(applied) + "/" + std::to_string(preset.Count());
-            if (cleared > 0) {
-                detail += LocaleText("，先清空 ", ", cleared ") + std::to_string(cleared);
-            }
-            if (exactSlot < applied) {
-                detail += LocaleText("（部分未落到原槽位）", " (some did not keep their original slot)");
+            // Read back every entry we think we wrote. "The add call returned
+            // success" is not evidence: this is the same ledger-authority rule the
+            // single-tattoo path follows, and without it a preset could report
+            // "12/12 applied" while every tattoo sat at the default colour.
+            int mismatched = 0;
+            for (const auto& check : placed) {
+                const auto result = CheckSlot(actor, check.area, check.slot, check.color, check.alpha);
+                if (result.Ok()) {
+                    continue;
+                }
+
+                ++mismatched;
+                SKSE::log::warn("PresetApply: '{}' / '{}' landed in {} #{} but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f})",
+                    check.section, check.name, check.area, check.slot, result.Reason(),
+                    result.actualColor, static_cast<std::int32_t>(check.color),
+                    result.actualAlpha, check.alpha);
             }
 
-            if (failed == 0) {
-                PushOutcome("PresetApply", preset.name, actor, detail, detail + LocaleText("；3D 未加载，同步被推迟", "; the 3D is not loaded so the sync was postponed"));
+            std::string detail = Tr("$STM_Ops_PresetAppliedPrefix") + std::to_string(applied) + "/" + std::to_string(preset.Count());
+            if (cleared > 0) {
+                detail += Tr("$STM_Ops_PresetClearedPrefix") + std::to_string(cleared);
+            }
+            if (exactSlot < applied) {
+                detail += Tr("$STM_Ops_PresetSomeSlotsShifted");
+            }
+            if (mismatched > 0) {
+                detail += Tr("$STM_Ops_PresetLedgerMismatchPrefix") + std::to_string(mismatched) + Tr("$STM_Ops_PresetLedgerMismatchSuffix");
+            }
+
+            if (failed == 0 && mismatched == 0) {
+                PushOutcome("PresetApply", preset.name, actor, detail, detail + Tr("$STM_Ops_Postponed3D"));
             } else if (applied > 0) {
-                Push(OpResult::Fail("PresetApply", preset.name, detail + LocaleText("，", ", ") + std::to_string(failed) + LocaleText(" 个失败", " failed")));
+                Push(OpResult::Fail("PresetApply", preset.name, detail + Tr("$STM_Ops_Comma") + std::to_string(failed) + Tr("$STM_Ops_FailedSuffix")));
             } else {
-                Push(OpResult::Fail("PresetApply", preset.name, LocaleText("全部失败（纹身名称可能已不在当前清单里）", "every entry failed (the tattoo names may no longer be in the catalogue)")));
+                Push(OpResult::Fail("PresetApply", preset.name, Tr("$STM_Ops_PresetAllFailed")));
             }
         });
     }

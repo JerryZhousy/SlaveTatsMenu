@@ -65,5 +65,10 @@ namespace stm::data
         RE::ActorHandle                       _reqHandle;
         std::string                           _reqArea;
         std::chrono::steady_clock::time_point _lastRequest{};
+
+        // One build at a time. Without this the UI re-posted a build on every
+        // frame while the previous one was still queued, because _valid only
+        // becomes true once the task actually runs.
+        bool _inFlight = false;
     };
 }

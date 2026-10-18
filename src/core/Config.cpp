@@ -1,4 +1,5 @@
 #include "core/Config.h"
+#include "core/Translation.h"
 
 #include "SimpleIni.h"
 
@@ -29,36 +30,45 @@ namespace stm
         if (rc < 0) {
             SKSE::log::warn("Config: could not read {} (error {}), writing defaults", pathStr, static_cast<int>(rc));
             Save();
-            return;
+            // Deliberately no early return: the reads below fall back to their
+            // defaults against the empty INI, and skipping them also skipped
+            // Translation::Load() - which left the whole UI showing raw $STM_ keys
+            // on a first run where the INI was missing.
         }
 
         toggleKey = static_cast<std::uint32_t>(ini.GetLongValue("General", "ToggleKey", 0x44));
-        defaultAlpha = static_cast<float>(ini.GetDoubleValue("General", "DefaultAlpha", 1.0));
-        defaultColor = static_cast<std::uint32_t>(ini.GetLongValue("General", "DefaultColor", 0x000000));
-        language = std::string_view{ ini.GetValue("General", "Language", "en") } == "zh" ? Language::kChinese : Language::kEnglish;
-        slotPolicy = static_cast<SlotPolicy>(ini.GetLongValue("General", "SlotPolicy", 0));
+        defaultAlpha = std::clamp(static_cast<float>(ini.GetDoubleValue("General", "DefaultAlpha", 1.0)), 0.05f, 1.0f);
+        defaultColor = static_cast<std::uint32_t>(ini.GetLongValue("General", "DefaultColor", 0x000000)) & 0xFFFFFF;
+        language = ini.GetValue("General", "Language", "en");
+        Translation::Get().Load(language);
 
-        windowWidth = static_cast<float>(ini.GetDoubleValue("UI", "WindowWidth", 1280.0));
-        windowHeight = static_cast<float>(ini.GetDoubleValue("UI", "WindowHeight", 720.0));
-        windowAlpha = static_cast<float>(ini.GetDoubleValue("UI", "WindowAlpha", 0.95));
-        fontScale = static_cast<float>(ini.GetDoubleValue("UI", "FontScale", 1.0));
+        // The INI is user editable, so every enum and every range gets clamped:
+        // an out-of-range value used to produce an invisible window (alpha 0) or
+        // an undefined SlotPolicy with no way to recover from inside the UI.
+        const long slotPolicyRaw = ini.GetLongValue("General", "SlotPolicy", 0);
+        slotPolicy = (slotPolicyRaw == 1) ? SlotPolicy::kOverwrite : SlotPolicy::kAutoFreeSlot;
+
+        windowWidth = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "WindowWidth", 1280.0)), 640.0f, 3840.0f);
+        windowHeight = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "WindowHeight", 720.0)), 400.0f, 2160.0f);
+        windowAlpha = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "WindowAlpha", 0.95)), 0.20f, 1.0f);
+        fontScale = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "FontScale", 1.0)), 0.75f, 1.5f);
         showPreview = ini.GetBoolValue("UI", "ShowPreview", true);
-        previewSize = static_cast<float>(ini.GetDoubleValue("UI", "PreviewSize", 96.0));
+        previewSize = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "PreviewSize", 96.0)), 32.0f, 512.0f);
         long mCol = ini.GetLongValue("UI", "MannequinColor", 1);
         if (mCol < 0 || mCol > 1) mCol = 1;
         mannequinColor = static_cast<MannequinColor>(mCol);
-        slotRefreshMs = static_cast<int>(ini.GetLongValue("UI", "SlotRefreshMs", 250));
+        slotRefreshMs = std::clamp(static_cast<int>(ini.GetLongValue("UI", "SlotRefreshMs", 250)), 50, 5000);
 
         probeEnabled = ini.GetBoolValue("Debug", "Probe", false);
-        probeIntervalMs = static_cast<int>(ini.GetLongValue("Debug", "ProbeIntervalMs", 1000));
+        probeIntervalMs = std::clamp(static_cast<int>(ini.GetLongValue("Debug", "ProbeIntervalMs", 1000)), 100, 60000);
         probeArea = ini.GetValue("Debug", "ProbeArea", "Body");
-        probeSlots = static_cast<int>(ini.GetLongValue("Debug", "ProbeSlots", 12));
-        callTraceEnabled = ini.GetBoolValue("Debug", "CallTrace", true);
+        probeSlots = std::clamp(static_cast<int>(ini.GetLongValue("Debug", "ProbeSlots", 12)), 1, 24);
+        callTraceEnabled = ini.GetBoolValue("Debug", "CallTrace", false);
 
         SKSE::log::info("Config: loaded {} (ToggleKey=0x{:X}, Lang={}, WinAlpha={:.2f}, FontScale={:.2f}, SlotPolicy={})",
             pathStr,
             toggleKey,
-            language == Language::kChinese ? "zh" : "en",
+            language,
             windowAlpha,
             fontScale,
             slotPolicy == SlotPolicy::kOverwrite ? "overwrite" : "autofree");
@@ -85,7 +95,7 @@ namespace stm
         ini.SetLongValue("General", "ToggleKey", toggleKey, nullptr, /*a_bUseHex=*/true);
         ini.SetDoubleValue("General", "DefaultAlpha", defaultAlpha);
         ini.SetLongValue("General", "DefaultColor", defaultColor, nullptr, /*a_bUseHex=*/true);
-        ini.SetValue("General", "Language", language == Language::kChinese ? "zh" : "en");
+        ini.SetValue("General", "Language", language.c_str());
         ini.SetLongValue("General", "SlotPolicy", static_cast<long>(slotPolicy));
 
         ini.SetDoubleValue("UI", "WindowWidth", windowWidth);
@@ -109,5 +119,10 @@ namespace stm
         } else {
             SKSE::log::info("Config: wrote defaults to {}", pathStr);
         }
+    }
+
+    bool Config::IsChinese() const
+    {
+        return Translation::NormalizeLanguage(language) == "CHINESE";
     }
 }

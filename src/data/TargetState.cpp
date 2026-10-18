@@ -1,19 +1,11 @@
 #include "data/TargetState.h"
 
-#include "core/Config.h"
+#include "core/Translation.h"
 
 #include <RE/C/CrosshairPickData.h>
 
 namespace stm::data
 {
-    namespace
-    {
-        const char* L(const char* a_zh, const char* a_en)
-        {
-            return Config::Get().IsChinese() ? a_zh : a_en;
-        }
-    }
-
     TargetState& TargetState::Get()
     {
         static TargetState s_state;
@@ -78,11 +70,11 @@ namespace stm::data
     {
         auto* actor = Resolve();
         if (!actor) {
-            return L("无目标", "none");
+            return Tr("$STM_Target_None", "none");
         }
 
         if (actor->IsPlayerRef()) {
-            return L("主角 (Player)", "Player");
+            return Tr("$STM_Target_Player", "Player");
         }
 
         if (auto* base = actor->GetActorBase()) {
@@ -91,7 +83,7 @@ namespace stm::data
             }
         }
 
-        return L("<未命名 NPC>", "<unnamed NPC>");
+        return Tr("$STM_Target_UnnamedNPC", "<unnamed NPC>");
     }
 
     std::uint32_t TargetState::FormID() const

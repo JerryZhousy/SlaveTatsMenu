@@ -25,6 +25,21 @@ namespace stm::ng
 
         SlotLimits g_slots;
 
+        // Upstream's upgrade_tattoos() compares .SlaveTats.version against a
+        // string literal compiled into SlaveTatsNG itself. We cannot read that
+        // literal, and hard-coding a guess means that the day upstream bumps it,
+        // the stamp we just wrote becomes a mismatch and triggers the very
+        // ledger rebuild the stamp exists to prevent.
+        //
+        // So the constant below is only a bootstrap. As soon as we see an actor
+        // whose .SlaveTats.version is already set, that value was written by
+        // upstream and is therefore authoritative - adopt it. If our bootstrap
+        // guess was wrong, upstream rebuilds once, writes its own value, and the
+        // next synchronisation adopts it: the stamp self-corrects instead of
+        // staying wrong forever.
+        constexpr const char* kBootstrapLedgerVersion = "2.0.0";
+        std::string           g_ledgerVersion = kBootstrapLedgerVersion;
+
         // BSFixedString interns a copy, but the source must stay alive for the
         // duration of the call - hence the local std::string at each call site.
         RE::BSFixedString Bs(const std::string& a_str)
@@ -189,11 +204,23 @@ namespace stm::ng
         // synchronisation throws the ledger away, which also silently undoes the
         // colour changes this menu just wrote. Stamping the version makes
         // upgrade_tattoos() return early instead.
-        if (jc::Ready() && jc::FormDbGetStr(a_actor, ".SlaveTats.version").empty()) {
-            jc::FormDbSetStr(a_actor, ".SlaveTats.version", "2.0.0");
+        //
+        // See g_ledgerVersion above for why the stamped value is learned rather
+        // than hard-coded.
+        if (jc::Ready()) {
+            const auto current = jc::FormDbGetStr(a_actor, ".SlaveTats.version");
 
-            const auto stamped = jc::FormDbGetStr(a_actor, ".SlaveTats.version");
-            SKSE::log::info("SlaveTatsNG: stamped .SlaveTats.version = '{}' (was empty) so synchronisation stops discarding the ledger", stamped);
+            if (current.empty()) {
+                jc::FormDbSetStr(a_actor, ".SlaveTats.version", g_ledgerVersion);
+
+                const auto stamped = jc::FormDbGetStr(a_actor, ".SlaveTats.version");
+                SKSE::log::info("SlaveTatsNG: stamped .SlaveTats.version = '{}' (was empty) so synchronisation stops discarding the ledger", stamped);
+            } else if (current != g_ledgerVersion) {
+                // A non-empty value came from upstream, so it beats our guess.
+                SKSE::log::info("SlaveTatsNG: upstream uses .SlaveTats.version = '{}' (we were stamping '{}'), switching to it",
+                    current, g_ledgerVersion);
+                g_ledgerVersion = current;
+            }
         }
 
         return FromFailT(iface->synchronize_tattoos(a_actor, false));

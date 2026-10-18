@@ -49,6 +49,57 @@ namespace stm::data
             }
             return true;
         }
+
+        // Refresh() lists whatever is on disk, verbatim. Load()/Delete() then
+        // used to sanitise the name again, which does not round-trip for every
+        // possible file stem: SanitizePresetName replaces characters, strips
+        // leading dots and truncates at kMaxNameLength. A preset whose stem is
+        // longer than that limit was therefore listed but could never be opened
+        // - the lookup pointed at a truncated filename that does not exist.
+        //
+        // So: use the name as given when it is a plain filename, and only fall
+        // back to the sanitised form (which is what Save() wrote).
+        bool IsPlainFileName(std::string_view a_name)
+        {
+            if (a_name.empty() || a_name.size() > 255) {
+                return false;
+            }
+            if (a_name == "." || a_name == "..") {
+                return false;
+            }
+            for (const char c : a_name) {
+                switch (c) {
+                case '/':
+                case '\\':
+                case ':':
+                case '*':
+                case '?':
+                case '"':
+                case '<':
+                case '>':
+                case '|':
+                    return false;
+                default:
+                    break;
+                }
+            }
+            return true;
+        }
+
+        // Resolve a preset name to a file: the verbatim stem when that file
+        // exists, otherwise the sanitised form that Save() writes.
+        std::filesystem::path ResolvePresetFile(const std::filesystem::path& a_dir, std::string_view a_name)
+        {
+            if (IsPlainFileName(a_name)) {
+                const auto direct = a_dir / (stm::text::Utf8ToWide(a_name) + L".json");
+                std::error_code ec;
+                if (std::filesystem::is_regular_file(direct, ec) && !ec) {
+                    return direct;
+                }
+            }
+
+            return a_dir / (stm::text::Utf8ToWide(SanitizePresetName(a_name)) + L".json");
+        }
     }
 
     PresetStore& PresetStore::Get()
@@ -91,13 +142,12 @@ namespace stm::data
 
     bool PresetStore::Load(std::string_view a_name, Preset& a_out, std::string* a_error) const
     {
-        const auto safe = SanitizePresetName(a_name);
-        const auto path = Directory() / (stm::text::Utf8ToWide(safe) + L".json");
+        const auto path = ResolvePresetFile(Directory(), a_name);
 
         std::string content;
         if (!ReadWholeFile(path, content)) {
             if (a_error) {
-                *a_error = "could not read " + safe + ".json";
+                *a_error = "could not read " + stm::text::WideToUtf8(path.filename().wstring());
             }
             return false;
         }
@@ -120,18 +170,23 @@ namespace stm::data
         return true;
     }
 
+    bool PresetStore::Exists(std::string_view a_name) const
+    {
+        std::error_code ec;
+        return std::filesystem::is_regular_file(ResolvePresetFile(Directory(), a_name), ec) && !ec;
+    }
+
     bool PresetStore::Delete(std::string_view a_name)
     {
-        const auto safe = SanitizePresetName(a_name);
-        const auto path = Directory() / (stm::text::Utf8ToWide(safe) + L".json");
+        const auto path = ResolvePresetFile(Directory(), a_name);
 
         std::error_code ec;
         const bool removed = std::filesystem::remove(path, ec);
         if (removed) {
-            SKSE::log::info("PresetStore: deleted '{}'", safe);
+            SKSE::log::info("PresetStore: deleted '{}'", stm::text::WideToUtf8(path.filename().wstring()));
             Refresh();
         } else if (ec) {
-            SKSE::log::warn("PresetStore: could not delete '{}': {}", safe, ec.message());
+            SKSE::log::warn("PresetStore: could not delete '{}': {}", stm::text::WideToUtf8(path.filename().wstring()), ec.message());
         }
         return removed;
     }

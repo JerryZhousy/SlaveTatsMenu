@@ -30,6 +30,16 @@ namespace stm::data
         {
             std::scoped_lock lock(_mutex);
 
+            if (_inFlight) {
+                // The posted build has not run yet. Re-posting one per frame used
+                // to flood the task queue (and with it JContainers) whenever it
+                // lagged, so wait for it - unless it never arrives at all.
+                if ((now - _lastRequest) < std::chrono::seconds(5)) {
+                    return;
+                }
+                _inFlight = false;
+            }
+
             const bool changed = !SameActor(_reqHandle, a_actor) || _reqArea != a_area;
             const auto interval = std::chrono::milliseconds(std::max(50, Config::Get().slotRefreshMs));
             const bool stale = !_valid || (now - _lastRequest) > interval;
@@ -41,6 +51,7 @@ namespace stm::data
             _reqHandle = a_actor;
             _reqArea = a_area;
             _lastRequest = now;
+            _inFlight = true;
         }
 
         PostToGameThread([a_actor, a_area]() { SlotSnapshot::Get().Build(a_actor, a_area); });
@@ -97,6 +108,7 @@ namespace stm::data
         _area = a_area;
         _actorFormID = actor ? actor->GetFormID() : 0;
         _valid = true;
+        _inFlight = false;
         ++_revision;
     }
 

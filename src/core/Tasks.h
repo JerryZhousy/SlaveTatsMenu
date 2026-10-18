@@ -75,9 +75,19 @@ namespace stm
             return s_board;
         }
 
+        // Only the most recent status is ever shown, and the board is drained by
+        // the render callback - which does not run at all before the user first
+        // opens the window, nor after they close it. Without a cap, a long
+        // session that never opens the menu accumulates one entry per operation
+        // for its entire lifetime.
+        static constexpr std::size_t kMaxPending = 64;
+
         void Push(OpResult a_result)
         {
             std::scoped_lock lock(_mutex);
+            if (_pending.size() >= kMaxPending) {
+                _pending.erase(_pending.begin(), _pending.begin() + static_cast<std::ptrdiff_t>(_pending.size() - kMaxPending + 1));
+            }
             _pending.push_back(std::move(a_result));
         }
 
