@@ -93,6 +93,7 @@ namespace stm::data
                 { "name", entry.name },
                 { "color", entry.color },
                 { "alpha", entry.alpha },
+                { "glow", entry.glow },
             });
         }
         root["entries"] = std::move(entries);
@@ -138,6 +139,7 @@ namespace stm::data
                 entry.name = item.value("name", "");
                 entry.color = item.value("color", 0x000000);
                 entry.alpha = item.value("alpha", 1.0f);
+                entry.glow = item.value("glow", 0x000000);
 
                 if (entry.name.empty() || !IsKnownArea(entry.area)) {
                     continue;

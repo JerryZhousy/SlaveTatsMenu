@@ -32,10 +32,12 @@ namespace stm::ops
         bool          present = false;  // a ledger entry exists in the slot at all
         bool          colorOk = false;
         bool          alphaOk = false;
+        bool          glowOk = true;  // only checked when a glow was requested
         std::int32_t  actualColor = -1;
         float         actualAlpha = -1.0f;
+        std::int32_t  actualGlow = -1;
 
-        bool Ok() const { return present && colorOk && alphaOk; }
+        bool Ok() const { return present && colorOk && alphaOk && glowOk; }
 
         // Human-readable reason, for the log line that accompanies a failure.
         const char* Reason() const
@@ -44,11 +46,15 @@ namespace stm::ops
             if (!colorOk && !alphaOk) { return "colour and opacity both differ"; }
             if (!colorOk) { return "colour differs"; }
             if (!alphaOk) { return "opacity differs"; }
+            if (!glowOk) { return "glow differs"; }
             return "";
         }
     };
 
-    inline LedgerCheck CheckHandle(std::int32_t a_handle, std::uint32_t a_color, float a_alpha)
+    // a_glow < 0 means "do not check the glow field". Every caller that writes a
+    // glow passes the value it wrote; the paths that only ever touch colour and
+    // opacity (an old preset, say) pass -1 and keep the previous contract.
+    inline LedgerCheck CheckHandle(std::int32_t a_handle, std::uint32_t a_color, float a_alpha, std::int32_t a_glow = -1)
     {
         LedgerCheck result;
         if (a_handle <= 0 || !jc::Ready()) {
@@ -64,20 +70,25 @@ namespace stm::ops
 
         result.colorOk = result.actualColor == static_cast<std::int32_t>(a_color);
         result.alphaOk = std::fabs(result.actualAlpha - a_alpha) <= kLedgerAlphaEpsilon;
+
+        if (a_glow >= 0) {
+            result.actualGlow = jc::MapGetInt(obj, "glow", 0);
+            result.glowOk = result.actualGlow == a_glow;
+        }
         return result;
     }
 
-    inline LedgerCheck CheckSlot(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t a_color, float a_alpha)
+    inline LedgerCheck CheckSlot(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t a_color, float a_alpha, std::int32_t a_glow = -1)
     {
         if (!a_actor || a_slot < 0 || !jc::Ready()) {
             return {};
         }
 
-        return CheckHandle(ng::GetAppliedInSlot(a_actor, a_area, a_slot), a_color, a_alpha);
+        return CheckHandle(ng::GetAppliedInSlot(a_actor, a_area, a_slot), a_color, a_alpha, a_glow);
     }
 
-    inline bool VerifyApplied(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t a_color, float a_alpha)
+    inline bool VerifyApplied(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t a_color, float a_alpha, std::int32_t a_glow = -1)
     {
-        return CheckSlot(a_actor, a_area, a_slot, a_color, a_alpha).Ok();
+        return CheckSlot(a_actor, a_area, a_slot, a_color, a_alpha, a_glow).Ok();
     }
 }

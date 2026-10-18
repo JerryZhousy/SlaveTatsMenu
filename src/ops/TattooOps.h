@@ -13,6 +13,9 @@ namespace stm::ops
         int               targetSlot = -1;  // -1 = first free slot
         std::uint32_t     color = 0x000000;
         float             alpha = 1.0f;
+        // Emissive colour written into the ledger's "glow" field. Black (0)
+        // means no glow, exactly like SlaveTats' own MCM colour picker.
+        std::uint32_t glow = 0x000000;
     };
 
     // All operations run on the game thread, verify their own result against

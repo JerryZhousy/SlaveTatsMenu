@@ -38,6 +38,10 @@ namespace stm::ui
         float alpha = 1.0f;
         int   targetSlot = -1;  // -1 = first free slot
 
+        // glow (emissive)
+        bool  glowOn = false;
+        float glowColor[3] = { 1.0f, 1.0f, 1.0f };
+
         // pattern preview (owned by SKSEMenuFramework)
         std::string           previewPath;
         std::string           previewLoadedPath;

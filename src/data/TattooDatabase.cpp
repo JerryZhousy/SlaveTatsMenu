@@ -128,6 +128,7 @@ namespace stm::data
             entry.texture = jc::MapGetStr(handle, "texture");
             entry.defaultColor = static_cast<std::uint32_t>(jc::MapGetInt(handle, "color", 0));
             entry.defaultAlpha = 1.0f - jc::MapGetFlt(handle, "invertedAlpha", 0.0f);
+            entry.defaultGlow = static_cast<std::uint32_t>(jc::MapGetInt(handle, "glow", 0));
 
             if (entry.name.empty() || !IsKnownArea(entry.area)) {
                 continue;

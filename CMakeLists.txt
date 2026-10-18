@@ -74,6 +74,10 @@ set(STM_SOURCES
     src/render/MannequinRenderer.h
     src/render/NifMeshExtractor.cpp
     src/render/NifMeshExtractor.h
+    src/render/DDSTextureLoader11.cpp
+    src/render/DDSTextureLoader11.h
+    src/render/TextureLoader.cpp
+    src/render/TextureLoader.h
 )
 
 add_library(${PROJECT_NAME} SHARED ${STM_SOURCES})

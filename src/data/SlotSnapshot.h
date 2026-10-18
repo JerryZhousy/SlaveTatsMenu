@@ -13,6 +13,7 @@ namespace stm::data
         std::string   section;
         std::uint32_t color = 0x000000;
         float         alpha = 1.0f;
+        std::uint32_t glow = 0x000000;
     };
 
     // A snapshot of what a given actor currently wears in one area.

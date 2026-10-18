@@ -26,6 +26,7 @@ namespace stm::data
         std::string   name;
         std::uint32_t color = 0x000000;
         float         alpha = 1.0f;
+        std::uint32_t glow = 0x000000;
     };
 
     struct Preset

@@ -22,6 +22,11 @@ namespace stm::data
         std::string   texture;
         std::uint32_t defaultColor = 0x000000;
         float         defaultAlpha = 1.0f;
+        // Emissive colour, the same "glow" integer SlaveTats stores in its
+        // ledger: 0xRRGGBB, and black (0) means "does not glow". Packs that
+        // never author the field leave it at 0, which is why most of them do
+        // not glow at all - the menu lets the user pick one anyway.
+        std::uint32_t defaultGlow = 0x000000;
     };
 
     struct TattooQuery

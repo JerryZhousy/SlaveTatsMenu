@@ -69,7 +69,8 @@ namespace stm::render
             float a_tattooAlpha,
             bool a_isBackArea = false,
             MannequinColor a_bodyColor = MannequinColor::kFlesh,
-            float a_shadeStrength = 0.0f
+            float a_shadeStrength = 0.0f,
+            const float a_glowColor[3] = nullptr
         );
 
         // 部位切换与读取

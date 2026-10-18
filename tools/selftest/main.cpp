@@ -67,7 +67,7 @@ int main(int argc, char** argv)
     std::cout << "\n=== loose pack file parsing ===\n";
     const std::string packJson = R"([
         {"name":"A","section":"S1","texture":"a\\b.dds","area":"Body"},
-        {"name":"B","section":"S2","texture":"c.dds","area":"face","color":16711680,"alpha":0.5},
+        {"name":"B","section":"S2","texture":"c.dds","area":"face","color":16711680,"alpha":0.5,"glow":65280},
         {"name":"","section":"S3","texture":"d.dds","area":"Body"},
         {"name":"D","section":"S4","texture":"e.dds","area":"torso"}
     ])";
@@ -79,9 +79,11 @@ int main(int argc, char** argv)
         if (entries.size() == 2) {
             Check(entries[0].name == "A" && entries[0].area == "Body", "first entry kept");
             Check(entries[0].defaultAlpha == 1.0f, "alpha defaults to 1");
+            Check(entries[0].defaultGlow == 0x000000u, "glow defaults to 0 (no glow)");
             Check(entries[1].area == "Face", "map key casing normalised per entry");
             Check(entries[1].defaultColor == 0xFF0000u, "colour read from the pack field", std::to_string(entries[1].defaultColor));
             Check(entries[1].defaultAlpha > 0.49f && entries[1].defaultAlpha < 0.51f, "alpha read from the pack field");
+            Check(entries[1].defaultGlow == 0x00FF00u, "glow read from the pack field", std::to_string(entries[1].defaultGlow));
         }
     }
 
@@ -192,7 +194,7 @@ int main(int argc, char** argv)
         preset.name = "灰风的纹身";
         preset.sourceActor = "灰风";
         preset.savedAt = "2026-10-09 22:50:00";
-        preset.entries.push_back(stm::data::PresetEntry{ "Body", 0, "RBQ_Tattoos", "RBQ 1", 0xFF0000u, 0.7f });
+        preset.entries.push_back(stm::data::PresetEntry{ "Body", 0, "RBQ_Tattoos", "RBQ 1", 0xFF0000u, 0.7f, 0x00FF00u });
         preset.entries.push_back(stm::data::PresetEntry{ "face", 2, "Makeup", "唇彩", 0x000000u, 1.0f });
 
         const auto json = stm::data::SerializePreset(preset);
@@ -208,7 +210,9 @@ int main(int argc, char** argv)
             Check(loaded.entries[0].area == "Body" && loaded.entries[0].slot == 0, "first entry area and slot");
             Check(loaded.entries[0].color == 0xFF0000u, "colour survives");
             Check(loaded.entries[0].alpha > 0.69f && loaded.entries[0].alpha < 0.71f, "alpha survives");
+            Check(loaded.entries[0].glow == 0x00FF00u, "glow survives");
             Check(loaded.entries[1].area == "Face", "lower-case area normalised on load", loaded.entries[1].area);
+            Check(loaded.entries[1].glow == 0x000000u, "missing glow defaults to 0");
         }
     }
 

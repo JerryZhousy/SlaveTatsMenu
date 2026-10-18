@@ -148,6 +148,7 @@ namespace stm::ops
                     entry.name = jc::MapGetStr(obj, "name");
                     entry.color = static_cast<std::uint32_t>(jc::MapGetInt(obj, "color", 0));
                     entry.alpha = 1.0f - jc::MapGetFlt(obj, "invertedAlpha", 0.0f);
+                    entry.glow = static_cast<std::uint32_t>(jc::MapGetInt(obj, "glow", 0));
 
                     if (entry.name.empty()) {
                         continue;
@@ -231,6 +232,7 @@ namespace stm::ops
                 int           slot = -1;
                 std::uint32_t color = 0;
                 float         alpha = 1.0f;
+                std::uint32_t glow = 0;
             };
             std::vector<Placed> placed;
 
@@ -257,6 +259,7 @@ namespace stm::ops
                         if (ng::AddAndGetTattoo(actor, first.id, wantSlot ? slot : -1, added) == ng::Status::kOk) {
                             const jc::ObjId fresh{ added };
                             jc::MapSetInt(fresh, "color", static_cast<std::int32_t>(entry.color));
+                            jc::MapSetInt(fresh, "glow", static_cast<std::int32_t>(entry.glow));
                             jc::MapSetFlt(fresh, "invertedAlpha", 1.0f - entry.alpha);
                             done = true;
 
@@ -264,7 +267,7 @@ namespace stm::ops
                             // taken upstream silently places the tattoo elsewhere.
                             const int landedSlot = FindSlotOfHandle(actor, entry.area, added);
                             if (landedSlot >= 0) {
-                                placed.push_back({ entry.section, entry.name, entry.area, landedSlot, entry.color, entry.alpha });
+                                placed.push_back({ entry.section, entry.name, entry.area, landedSlot, entry.color, entry.alpha, entry.glow });
                                 if (wantSlot && landedSlot == slot) {
                                     ++exactSlot;
                                 }
@@ -281,7 +284,13 @@ namespace stm::ops
                         const int   landedSlot = FindAppliedSlot(actor, entry.section, entry.name, &landedArea);
                         if (landedSlot >= 0) {
                             done = true;
-                            placed.push_back({ entry.section, entry.name, landedArea, landedSlot, entry.color, entry.alpha });
+                            if (entry.glow != 0) {
+                                const auto handle = ng::GetAppliedInSlot(actor, landedArea, landedSlot);
+                                if (handle > 0) {
+                                    jc::MapSetInt(jc::ObjId{ handle }, "glow", static_cast<std::int32_t>(entry.glow));
+                                }
+                            }
+                            placed.push_back({ entry.section, entry.name, landedArea, landedSlot, entry.color, entry.alpha, entry.glow });
                         }
                     }
                 }
@@ -305,16 +314,17 @@ namespace stm::ops
             // "12/12 applied" while every tattoo sat at the default colour.
             int mismatched = 0;
             for (const auto& check : placed) {
-                const auto result = CheckSlot(actor, check.area, check.slot, check.color, check.alpha);
+                const auto result = CheckSlot(actor, check.area, check.slot, check.color, check.alpha, static_cast<std::int32_t>(check.glow));
                 if (result.Ok()) {
                     continue;
                 }
 
                 ++mismatched;
-                SKSE::log::warn("PresetApply: '{}' / '{}' landed in {} #{} but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f})",
+                SKSE::log::warn("PresetApply: '{}' / '{}' landed in {} #{} but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f}, glow {} vs {})",
                     check.section, check.name, check.area, check.slot, result.Reason(),
                     result.actualColor, static_cast<std::int32_t>(check.color),
-                    result.actualAlpha, check.alpha);
+                    result.actualAlpha, check.alpha,
+                    result.actualGlow, static_cast<std::int32_t>(check.glow));
             }
 
             std::string detail = Tr("$STM_Ops_PresetAppliedPrefix") + std::to_string(applied) + "/" + std::to_string(preset.Count());

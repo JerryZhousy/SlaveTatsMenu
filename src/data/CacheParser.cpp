@@ -26,6 +26,9 @@ namespace stm::data
             entry.area = NormalizeArea(a_item.value("area", std::string(a_fallbackArea)));
             entry.texture = a_item.value("texture", "");
             entry.defaultColor = a_item.value("color", 0x000000);
+            // "glow" is a colour, not a scalar: SlaveTats stores the emissive
+            // tint in the ledger as 0xRRGGBB, black meaning "no glow".
+            entry.defaultGlow = a_item.value("glow", 0x000000);
 
             if (a_packStyle) {
                 entry.defaultAlpha = a_item.value("alpha", 1.0f);

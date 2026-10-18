@@ -1,5 +1,6 @@
 #include "render/MannequinRenderer.h"
 #include "render/NifMeshExtractor.h"
+#include "render/TextureLoader.h"
 #include "data/TargetState.h"
 #include <SKSE/SKSE.h>
 #include <d3dcompiler.h>
@@ -135,6 +136,7 @@ namespace stm::render
                 float4 TattooColor;     // 纹身叠加颜色与透明度
                 float4 CameraPos;       // 相机位置 (世界坐标)
                 float4 Params;          // x: hasTattoo, y: isBackArea, z: time, w: unused
+                float4 TattooGlow;      // rgb: glow color, a: hasGlow
             };
 
             struct VS_INPUT
@@ -197,43 +199,65 @@ namespace stm::render
                 }
 
                 // 叠加纹身贴图。单色线稿照旧"贴图色 x 墨水色"(与游戏内一致);
-                // 但贴图自带彩色、墨色又还是默认黑时, 直接呈现贴图原色, 否则整个
-                // 预览里的彩绘/口红/图案都会被乘成一块黑板, 根本看不出图案内容。
+                // 但贴图自带彩色、墨色又还是默认黑时, 直接呈现贴图原色, 避免彩绘/口红等被乘黑。
                 if (Params.x > 0.5f) {
                     float4 tex = TattooTexture.Sample(SamplerLinear, input.UV);
                     float tatAlpha = tex.a * TattooColor.a;
-                    if (tatAlpha > 0.01f) {
+                    if (tatAlpha > 0.005f) {
                         float3 ink = TattooColor.rgb;
                         float  inkMax = max(ink.r, max(ink.g, ink.b));
                         float  texChroma = max(tex.r, max(tex.g, tex.b)) - min(tex.r, min(tex.g, tex.b));
 
                         float3 tatRgb = (texChroma > 0.08f && inkMax < 0.05f) ? tex.rgb : (tex.rgb * ink);
 
-                        // 墨水当作"色相层"来叠:
-                        //   彩色墨水 -> 亮度取人体自己的亮度(否则品红/深色墨水会把人体压出
-                        //   一片片暗斑: 实测 75% 的纹身像素比人体暗 10% 以上, 因为品红亮度
-                        //   只有 0.39 而人体是 0.68; 而贴图里 87% 是半透明雾状像素, 叠上去
-                        //   就是"大块不均匀");
-                        //   接近黑/灰的墨水 -> 保留自身暗度(黑墨线稿不能变成灰的看不见)。
-                        // inkHue 的亮度恰好为 0, 所以 inkFinal 的亮度 = 插值出来的目标亮度。
-                        float  effMax = max(tatRgb.r, max(tatRgb.g, tatRgb.b));
-                        float  effMin = min(tatRgb.r, min(tatRgb.g, tatRgb.b));
-                        float  inkSat = saturate((effMax - effMin) * 2.0f);
+                        // 结合立体漫反射与明暗体积, 纯正饱和度直接混合, 杜绝亮度污染产生的暗红/浑浊感
+                        float3 tatLit = tatRgb * (shadeBase + 0.20f * shadeW * volume);
+                        color = lerp(color, tatLit, tatAlpha);
 
-                        float  inkLum   = dot(tatRgb, float3(0.299f, 0.587f, 0.114f));
-                        float3 inkHue   = tatRgb - inkLum;
-                        float  bodyLum  = dot(color, float3(0.299f, 0.587f, 0.114f));
-                        float3 inkFinal = inkHue + lerp(inkLum, bodyLum, inkSat);
-
-                        // 保留一点点人体自身的明暗, 让纹身与人体的观感一致
-                        inkFinal *= (shadeBase + 0.20f * shadeW * volume);
-
-                        color = lerp(color, inkFinal, tatAlpha);
-
-                        // 肉色模式不抬像素 alpha, 保证全身透明度完全一致;
-                        // 全息模式要让纹身自己撑起不透明度, 否则会被身体看穿。
+                        // 全息模式让纹身自身具备不透明度支撑
                         if (Params.z < 0.5f) {
                             alpha = max(alpha, tatAlpha * 0.95f);
+                        }
+                    }
+
+                    // 自发光与皮肤上的辐射泛光 / 散光 (Emissive Bloom & Halo spreading onto skin)
+                    if (TattooGlow.a > 0.5f) {
+                        // 1. 纹身核心高亮自发光
+                        float coreGlow = tex.a * TattooColor.a;
+
+                        // 2. 利用 Mipmap 高斯模糊捕获大范围辐射光晕
+                        float nearBloom = TattooTexture.SampleLevel(SamplerLinear, input.UV, 2.5f).a;
+                        float wideBloom = TattooTexture.SampleLevel(SamplerLinear, input.UV, 4.5f).a;
+
+                        // 3. 8 方向径向采样，确保无 mipmap 贴图也能产生向外散溢到皮肤的柔和光晕
+                        float tapGlow = 0.0f;
+                        static const float2 kGlowOffsets[8] = {
+                            float2( 0.0035f,  0.0000f),
+                            float2(-0.0035f,  0.0000f),
+                            float2( 0.0000f,  0.0035f),
+                            float2( 0.0000f, -0.0035f),
+                            float2( 0.0025f,  0.0025f),
+                            float2(-0.0025f,  0.0025f),
+                            float2( 0.0025f, -0.0025f),
+                            float2(-0.0025f, -0.0025f)
+                        };
+                        [unroll]
+                        for (int k = 0; k < 8; ++k) {
+                            tapGlow += TattooTexture.SampleLevel(SamplerLinear, input.UV + kGlowOffsets[k], 0).a;
+                        }
+                        tapGlow *= 0.125f;
+
+                        // 漫射扩散至周围皮肤的散光光晕 (Halo onto surrounding skin)
+                        float skinHalo = max(tapGlow * 0.70f, max(nearBloom * 0.75f, wideBloom * 0.40f)) * TattooColor.a;
+
+                        // 合成总发光：核心强光 (1.5x) + 皮肤扩散泛光 (1.35x)
+                        float totalGlow = coreGlow * 1.5f + skinHalo * 1.35f;
+
+                        if (totalGlow > 0.003f) {
+                            color += TattooGlow.rgb * totalGlow;
+                            if (Params.z < 0.5f) {
+                                alpha = max(alpha, saturate(totalGlow * 0.85f));
+                            }
                         }
                     }
                 }
@@ -250,6 +274,7 @@ namespace stm::render
             DirectX::XMFLOAT4 tattooColor;
             DirectX::XMFLOAT4 cameraPos;
             DirectX::XMFLOAT4 params;
+            DirectX::XMFLOAT4 tattooGlow;
         };
 
         // 生成优雅的 3D 人偶身体网格（标准老滚 Body UV 躯干、腰肢、臀腿基础轮廓）
@@ -604,6 +629,9 @@ namespace stm::render
         // Before anything else: a worker mid-parse must not be left writing into
         // this process after the DLL is unloaded.
         StopMeshWorker();
+
+        // Release all cached tattoo textures while D3D device is still alive
+        TextureLoader::ClearCache();
 
         if (_constantBuffer) { _constantBuffer->Release(); _constantBuffer = nullptr; }
         if (_inputLayout) { _inputLayout->Release(); _inputLayout = nullptr; }
@@ -1236,7 +1264,8 @@ namespace stm::render
         float a_tattooAlpha,
         bool a_isBackArea,
         MannequinColor a_bodyColor,
-        float a_shadeStrength)
+        float a_shadeStrength,
+        const float a_glowColor[3])
     {
         // Upload any mesh set the worker finished since the last frame. This is
         // the only place D3D buffers are created for background-loaded geometry,
@@ -1400,6 +1429,11 @@ namespace stm::render
             }
             cb->tattooColor = DirectX::XMFLOAT4(a_tattooColor[0], a_tattooColor[1], a_tattooColor[2], a_tattooAlpha);
             cb->cameraPos = DirectX::XMFLOAT4(eyeX, eyeY, eyeZ, 1.0f);
+            if (a_glowColor) {
+                cb->tattooGlow = DirectX::XMFLOAT4(a_glowColor[0], a_glowColor[1], a_glowColor[2], 1.0f);
+            } else {
+                cb->tattooGlow = DirectX::XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+            }
             _context->Unmap(_constantBuffer, 0);
         } else {
             SKSE::log::warn("[RENDER] ConstantBuffer Map failed (0x{:X})", static_cast<std::uint32_t>(hrMap));

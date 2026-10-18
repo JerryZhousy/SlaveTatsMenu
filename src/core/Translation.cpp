@@ -21,6 +21,17 @@ namespace stm
                 return std::isalnum(c) != 0 || c == '_' || c == '-';
             });
         }
+
+        // Interface/Translations/SlaveTatsMenu_template.txt is the reference copy
+        // translators start from. Its name matches the SlaveTatsMenu_*.txt glob, so
+        // without this it would be offered as a language called "TEMPLATE" and,
+        // if picked, would load the untranslated reference over the real strings.
+        constexpr std::string_view kTemplateLanguageCode = "TEMPLATE";
+
+        bool IsTemplateLanguage(std::string_view a_normalizedCode)
+        {
+            return a_normalizedCode == kTemplateLanguageCode;
+        }
     }
 
     Translation& Translation::Get()
@@ -94,6 +105,10 @@ namespace stm
             SKSE::log::warn("Translation: refusing invalid language code '{}'", std::string(a_lang));
             return {};
         }
+        if (IsTemplateLanguage(norm)) {
+            SKSE::log::warn("Translation: '{}' is the template, not a language", std::string(a_lang));
+            return {};
+        }
 
         const std::string targetFilename = "SlaveTatsMenu_" + norm + ".txt";
 
@@ -133,7 +148,7 @@ namespace stm
                         std::string langCode = filename.substr(14, filename.size() - 14 - 4);
                         if (!langCode.empty()) {
                             const auto normalized = NormalizeLanguage(langCode);
-                            if (IsValidLanguageCode(normalized)) {
+                            if (IsValidLanguageCode(normalized) && !IsTemplateLanguage(normalized)) {
                                 langs.insert(normalized);
                             }
                         }
@@ -246,6 +261,12 @@ namespace stm
     void Translation::Load(std::string_view a_lang)
     {
         _currentLang = NormalizeLanguage(a_lang);
+        if (IsTemplateLanguage(_currentLang)) {
+            // An INI pointing at the shipped template is a mistake, not a language
+            // choice: fall back instead of rendering the untranslated reference copy.
+            SKSE::log::warn("Translation: '{}' is the template, not a language; using ENGLISH", _currentLang);
+            _currentLang = "ENGLISH";
+        }
         _langCacheValid = false;
 
         // Always load ENGLISH as base fallback if not already loaded

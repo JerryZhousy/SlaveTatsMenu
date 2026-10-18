@@ -127,10 +127,11 @@ namespace stm::ops
         }
 
 
-        // Writes colour/alpha into an applied tattoo's ledger entry and forces a
-        // resynchronisation. This is the only way to restyle an existing tattoo:
-        // upstream's simple_add_tattoo short-circuits when it is already applied.
-        bool RestyleApplied(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t a_color, float a_alpha)
+        // Writes colour/glow/alpha into an applied tattoo's ledger entry and
+        // forces a resynchronisation. This is the only way to restyle an existing
+        // tattoo: upstream's simple_add_tattoo short-circuits when it is already
+        // applied.
+        bool RestyleApplied(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t a_color, float a_alpha, std::uint32_t a_glow)
         {
             const auto handle = ng::GetAppliedInSlot(a_actor, a_area, a_slot);
             if (handle <= 0) {
@@ -139,15 +140,17 @@ namespace stm::ops
 
             const jc::ObjId obj{ handle };
             jc::MapSetInt(obj, "color", static_cast<std::int32_t>(a_color));
+            jc::MapSetInt(obj, "glow", static_cast<std::int32_t>(a_glow));
             jc::MapSetFlt(obj, "invertedAlpha", 1.0f - a_alpha);
             jc::FormDbSetInt(a_actor, ".SlaveTats.updated", 1);
 
             ng::Synchronize(a_actor);
 
-            // Read back: the ledger is the only authority we trust. Both fields
-            // matter - verifying only the colour reported "ok" while a failed
-            // alpha write left the tattoo at the old opacity.
-            return VerifyApplied(a_actor, a_area, a_slot, a_color, a_alpha);
+            // Read back: the ledger is the only authority we trust. All three
+            // fields matter - verifying only the colour reported "ok" while a
+            // failed alpha write left the tattoo at the old opacity, and the
+            // glow is a plain int write with no other way to confirm it landed.
+            return VerifyApplied(a_actor, a_area, a_slot, a_color, a_alpha, static_cast<std::int32_t>(a_glow));
         }
     }
 
@@ -180,7 +183,7 @@ namespace stm::ops
                     return;
                 }
 
-                const bool ok = RestyleApplied(actor, existingArea, existingSlot, a_request.color, a_request.alpha);
+                const bool ok = RestyleApplied(actor, existingArea, existingSlot, a_request.color, a_request.alpha, a_request.glow);
                 data::SlotSnapshot::Get().Invalidate();
 
                 if (!ok) {
@@ -191,7 +194,7 @@ namespace stm::ops
                 PushOutcome("Recolor",
                     name,
                     actor,
-                    Tr("$STM_Ops_AlreadyOn") + existingArea + " #" + std::to_string(existingSlot) + Tr("$STM_Ops_ColorOpacityUpdated"),
+                    Tr("$STM_Ops_AlreadyOn") + existingArea + " #" + std::to_string(existingSlot) + Tr("$STM_Ops_ColorGlowOpacityUpdated"),
                     Tr("$STM_Ops_SyncPostponed3D"));
                 return;
             }
@@ -243,6 +246,7 @@ namespace stm::ops
                         if (ng::AddAndGetTattoo(actor, first.id, a_request.targetSlot, added) == ng::Status::kOk) {
                             const jc::ObjId fresh{ added };
                             jc::MapSetInt(fresh, "color", static_cast<std::int32_t>(a_request.color));
+                            jc::MapSetInt(fresh, "glow", static_cast<std::int32_t>(a_request.glow));
                             jc::MapSetFlt(fresh, "invertedAlpha", 1.0f - a_request.alpha);
                             jc::FormDbSetInt(actor, ".SlaveTats.updated", 1);
                             ng::Synchronize(actor);
@@ -252,12 +256,14 @@ namespace stm::ops
 
                             if (landed == added && landed > 0) {
                                 const std::string target = name + " -> " + a_request.tattoo.area + " #" + std::to_string(a_request.targetSlot);
-                                const auto check = CheckSlot(actor, a_request.tattoo.area, a_request.targetSlot, a_request.color, a_request.alpha);
+                                const auto check = CheckSlot(actor, a_request.tattoo.area, a_request.targetSlot, a_request.color, a_request.alpha,
+                                    static_cast<std::int32_t>(a_request.glow));
                                 if (!check.Ok()) {
-                                    SKSE::log::warn("Ops: '{}' landed in {} #{} but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f})",
+                                    SKSE::log::warn("Ops: '{}' landed in {} #{} but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f}, glow {} vs {})",
                                         name, a_request.tattoo.area, a_request.targetSlot, check.Reason(),
                                         check.actualColor, static_cast<std::int32_t>(a_request.color),
-                                        check.actualAlpha, a_request.alpha);
+                                        check.actualAlpha, a_request.alpha,
+                                        check.actualGlow, static_cast<std::int32_t>(a_request.glow));
                                     Push(OpResult::Fail("Apply", target,
                                         std::string(Tr("$STM_Ops_PlacedRequestedSlot")) + Tr("$STM_Ops_Comma") + Tr("$STM_Ops_LedgerMismatch")));
                                     return;
@@ -275,12 +281,14 @@ namespace stm::ops
                             const int actualSlot = FindSlotOfHandle(actor, a_request.tattoo.area, added);
                             if (actualSlot >= 0) {
                                 const std::string target = name + " -> " + a_request.tattoo.area + " #" + std::to_string(actualSlot);
-                                const auto check = CheckSlot(actor, a_request.tattoo.area, actualSlot, a_request.color, a_request.alpha);
+                                const auto check = CheckSlot(actor, a_request.tattoo.area, actualSlot, a_request.color, a_request.alpha,
+                                    static_cast<std::int32_t>(a_request.glow));
                                 if (!check.Ok()) {
-                                    SKSE::log::warn("Ops: '{}' landed in {} #{} (requested #{}) but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f})",
+                                    SKSE::log::warn("Ops: '{}' landed in {} #{} (requested #{}) but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f}, glow {} vs {})",
                                         name, a_request.tattoo.area, actualSlot, a_request.targetSlot, check.Reason(),
                                         check.actualColor, static_cast<std::int32_t>(a_request.color),
-                                        check.actualAlpha, a_request.alpha);
+                                        check.actualAlpha, a_request.alpha,
+                                        check.actualGlow, static_cast<std::int32_t>(a_request.glow));
                                     Push(OpResult::Fail("Apply", target,
                                         std::string(Tr("$STM_Ops_PlacedAutoSlot")) + Tr("$STM_Ops_Comma") + Tr("$STM_Ops_LedgerMismatch")));
                                     return;
@@ -310,15 +318,29 @@ namespace stm::ops
             data::SlotSnapshot::Get().Invalidate();
 
             if (landed >= 0) {
+                // If glow was requested, SimpleAddTattoo cannot set glow: write it
+                // into the ledger and resynchronize.
+                if (a_request.glow != 0) {
+                    const auto handle = ng::GetAppliedInSlot(actor, a_request.tattoo.area, landed);
+                    if (handle > 0) {
+                        jc::MapSetInt(jc::ObjId{ handle }, "glow", static_cast<std::int32_t>(a_request.glow));
+                        jc::FormDbSetInt(actor, ".SlaveTats.updated", 1);
+                        ng::Synchronize(actor);
+                        data::SlotSnapshot::Get().Invalidate();
+                    }
+                }
+
                 // The high level API takes colour/alpha as arguments, so it can
                 // also report success while quietly leaving the entry at its
                 // defaults. Same read-back rule as every other write path.
-                const auto check = CheckSlot(actor, a_request.tattoo.area, landed, a_request.color, a_request.alpha);
+                const auto check = CheckSlot(actor, a_request.tattoo.area, landed, a_request.color, a_request.alpha,
+                    static_cast<std::int32_t>(a_request.glow));
                 if (!check.Ok()) {
-                    SKSE::log::warn("Ops: '{}' landed in {} #{} via the auto slot but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f})",
+                    SKSE::log::warn("Ops: '{}' landed in {} #{} via the auto slot but the ledger disagrees: {} (colour {} vs {}, opacity {:.3f} vs {:.3f}, glow {} vs {})",
                         name, a_request.tattoo.area, landed, check.Reason(),
                         check.actualColor, static_cast<std::int32_t>(a_request.color),
-                        check.actualAlpha, a_request.alpha);
+                        check.actualAlpha, a_request.alpha,
+                        check.actualGlow, static_cast<std::int32_t>(a_request.glow));
                     Push(OpResult::Fail("Apply", name,
                         std::string(Tr("$STM_Ops_AppliedToTarget")) + Tr("$STM_Ops_Comma") + Tr("$STM_Ops_LedgerMismatch")));
                     return;

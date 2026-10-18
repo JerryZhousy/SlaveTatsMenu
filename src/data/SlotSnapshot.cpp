@@ -89,6 +89,7 @@ namespace stm::data
                         info.section = jc::MapGetStr(obj, "section");
                         info.color = static_cast<std::uint32_t>(jc::MapGetInt(obj, "color", 0));
                         info.alpha = 1.0f - jc::MapGetFlt(obj, "invertedAlpha", 0.0f);
+                        info.glow = static_cast<std::uint32_t>(jc::MapGetInt(obj, "glow", 0));
                     }
 
                     // A slot we cannot name is either an overlay owned by another

@@ -14,6 +14,7 @@
 #include "ops/PresetOps.h"
 #include "ops/TattooOps.h"
 #include "render/MannequinRenderer.h"
+#include "render/TextureLoader.h"
 #include "ui/UiState.h"
 
 #include <shellapi.h>
@@ -147,41 +148,20 @@ namespace stm::ui
                 return;
             }
 
-            if (state.previewTexture) {
-                if (!state.previewLoadedPath.empty()) {
-                    SKSEMenuFramework::DisposeTexture(state.previewLoadedPath);
-                }
-                state.previewTexture = nullptr;
-            }
-
             state.previewPath = a_rawTexture;
             state.previewLoadedPath.clear();
             if (state.previewPath.empty()) {
+                state.previewTexture = nullptr;
                 return;
             }
 
-            std::string path = state.previewPath;
-            std::replace(path.begin(), path.end(), '\\', '/');
-            if (path.rfind("Textures/", 0) != 0 && path.rfind("textures/", 0) != 0 &&
-                path.rfind("Data/Textures/", 0) != 0 && path.rfind("data/textures/", 0) != 0) {
-                path = "Data/Textures/Actors/Character/slavetats/" + path;
-            } else if (path.rfind("Data/", 0) != 0 && path.rfind("data/", 0) != 0) {
-                path = "Data/" + path;
-            }
+            state.previewLoadedPath = render::TextureLoader::NormalizeVfsPath(state.previewPath);
+            auto* srv = render::TextureLoader::LoadTattooTexture(state.previewPath);
+            state.previewTexture = reinterpret_cast<ImGuiMCP::ImTextureID>(srv);
 
-            // Ensure extension is lower-case .dds for SKSEMenuFramework case-sensitive check
-            if (path.size() >= 4) {
-                std::string ext = path.substr(path.size() - 4);
-                if (ext == ".DDS" || ext == ".Dds") {
-                    path.replace(path.size() - 4, 4, ".dds");
-                }
-            }
-
-            state.previewLoadedPath = path;
-            state.previewTexture = SKSEMenuFramework::LoadTexture(path);
             if (!state.previewTexture) {
-                // Not fatal: loose file missing, packed in BSA, or framework error.
-                SKSE::log::warn("UI: preview for '{}' unavailable (missing loose file, packed in BSA, or framework error)", path);
+                // Not fatal: missing from both loose Data/ and BSA archives
+                SKSE::log::warn("UI: preview for '{}' unavailable (VFS path: '{}')", state.previewPath, state.previewLoadedPath);
             }
         }
 
@@ -257,6 +237,15 @@ namespace stm::ui
             state.color[1] = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
             state.color[2] = static_cast<float>(rgb & 0xFF) / 255.0f;
             state.alpha = (a_entry.defaultAlpha >= 1.0f) ? config.defaultAlpha : a_entry.defaultAlpha;
+
+            if (a_entry.defaultGlow > 0) {
+                state.glowOn = true;
+                state.glowColor[0] = static_cast<float>((a_entry.defaultGlow >> 16) & 0xFF) / 255.0f;
+                state.glowColor[1] = static_cast<float>((a_entry.defaultGlow >> 8) & 0xFF) / 255.0f;
+                state.glowColor[2] = static_cast<float>(a_entry.defaultGlow & 0xFF) / 255.0f;
+            } else {
+                state.glowOn = false;
+            }
 
             UpdatePreview(a_entry.texture);
 
@@ -614,11 +603,21 @@ namespace stm::ui
                         // callback (it used to re-read them through ReadSlotAppearance).
                         const std::uint32_t color = slot.color;
                         const float         alpha = slot.alpha;
+                        const std::uint32_t glow = slot.glow;
 
                         state.color[0] = static_cast<float>((color >> 16) & 0xFF) / 255.0f;
                         state.color[1] = static_cast<float>((color >> 8) & 0xFF) / 255.0f;
                         state.color[2] = static_cast<float>(color & 0xFF) / 255.0f;
                         state.alpha = alpha;
+
+                        if (glow > 0) {
+                            state.glowOn = true;
+                            state.glowColor[0] = static_cast<float>((glow >> 16) & 0xFF) / 255.0f;
+                            state.glowColor[1] = static_cast<float>((glow >> 8) & 0xFF) / 255.0f;
+                            state.glowColor[2] = static_cast<float>(glow & 0xFF) / 255.0f;
+                        } else {
+                            state.glowOn = false;
+                        }
 
                         const auto* matched = data::TattooDatabase::Get().Find(slot.section, slot.name);
                         if (matched) {
@@ -723,7 +722,9 @@ namespace stm::ui
                     state.color,
                     state.alpha,
                     false,
-                    Config::Get().mannequinColor
+                    Config::Get().mannequinColor,
+                    0.0f,
+                    state.glowOn ? state.glowColor : nullptr
                 );
 
                 if (bigSrv) {
@@ -892,7 +893,9 @@ namespace stm::ui
                                     state.color,
                                     state.alpha,
                                     false,
-                                    Config::Get().mannequinColor
+                                    Config::Get().mannequinColor,
+                                    0.0f,
+                                    state.glowOn ? state.glowColor : nullptr
                                 );
                             } else {
                                 srv = render::MannequinRenderer::Get().GetShaderResourceView();
@@ -1013,15 +1016,15 @@ namespace stm::ui
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton(Tr("$STM_Red"))) {
-                    state.color[0] = 0.8f;
-                    state.color[1] = 0.1f;
-                    state.color[2] = 0.1f;
+                    state.color[0] = 1.0f;
+                    state.color[1] = 0.0f;
+                    state.color[2] = 0.0f;
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton(Tr("$STM_Gold"))) {
-                    state.color[0] = 0.9f;
-                    state.color[1] = 0.7f;
-                    state.color[2] = 0.2f;
+                    state.color[0] = 1.0f;
+                    state.color[1] = 0.843f;
+                    state.color[2] = 0.0f;
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton(Tr("$STM_White"))) {
@@ -1029,12 +1032,24 @@ namespace stm::ui
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton(Tr("$STM_Blue"))) {
-                    state.color[0] = 0.2f;
-                    state.color[1] = 0.4f;
-                    state.color[2] = 0.9f;
+                    state.color[0] = 0.0f;
+                    state.color[1] = 0.5f;
+                    state.color[2] = 1.0f;
                 }
 
                 ImGui::SliderFloat(Tr("$STM_Opacity"), &state.alpha, 0.05f, 1.0f, "%.2f");
+
+                ImGui::Spacing();
+                ImGui::Checkbox(Tr("$STM_GlowOn", "Glow (Emissive)##glow_on"), &state.glowOn);
+                if (state.glowOn) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(Tr("$STM_GlowMatchInk", "Match Ink##glow_match"))) {
+                        state.glowColor[0] = state.color[0];
+                        state.glowColor[1] = state.color[1];
+                        state.glowColor[2] = state.color[2];
+                    }
+                    ImGui::ColorEdit3(Tr("$STM_GlowColor", "Glow Color##glow_col"), state.glowColor);
+                }
 
                 // Slot picker. The chosen slot is clamped against the area the
                 // selected tattoo actually belongs to, so a stale value from
@@ -1097,6 +1112,7 @@ namespace stm::ui
                     request.targetSlot = state.targetSlot;
                     request.color = PackColor(state.color);
                     request.alpha = state.alpha;
+                    request.glow = state.glowOn ? PackColor(state.glowColor) : 0x000000;
                     ops::Apply(request);
                 }
 
@@ -1781,7 +1797,10 @@ namespace stm::ui
                 ImGui::SameLine();
 
                 const auto availableLangs = Translation::Get().GetAvailableLanguages();
-                const auto currentNorm = Translation::NormalizeLanguage(config.language);
+                // The loaded language, not the raw INI value: an INI pointing at the
+                // template (or any invalid code) is coerced during Load(), and the
+                // combo has to agree with the strings actually being displayed.
+                const auto currentNorm = Translation::Get().GetCurrentLanguage();
                 std::string currentDisplay = Translation::GetLanguageDisplayName(currentNorm);
 
                 ImGui::SetNextItemWidth(220.0f);
