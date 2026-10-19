@@ -36,8 +36,6 @@ namespace stm
         float windowHeight = 720.0f;
         float windowAlpha = 0.95f;   // 0.2 ~ 1.0
         float fontScale = 1.0f;     // 0.75 ~ 1.5
-        bool  showPreview = true;   // 是否显示图案预览
-        float previewSize = 96.0f;  // 预览图边长
         MannequinColor mannequinColor = MannequinColor::kFlesh; // 3D模特人体颜色风格
         int   slotRefreshMs = 250;  // how often the applied-slot snapshot is rebuilt
 

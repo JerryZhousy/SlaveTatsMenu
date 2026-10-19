@@ -52,8 +52,6 @@ namespace stm
         windowHeight = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "WindowHeight", 720.0)), 400.0f, 2160.0f);
         windowAlpha = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "WindowAlpha", 0.95)), 0.20f, 1.0f);
         fontScale = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "FontScale", 1.0)), 0.75f, 1.5f);
-        showPreview = ini.GetBoolValue("UI", "ShowPreview", true);
-        previewSize = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "PreviewSize", 96.0)), 32.0f, 512.0f);
         long mCol = ini.GetLongValue("UI", "MannequinColor", 1);
         if (mCol < 0 || mCol > 1) mCol = 1;
         mannequinColor = static_cast<MannequinColor>(mCol);
@@ -102,8 +100,6 @@ namespace stm
         ini.SetDoubleValue("UI", "WindowHeight", windowHeight);
         ini.SetDoubleValue("UI", "WindowAlpha", windowAlpha);
         ini.SetDoubleValue("UI", "FontScale", fontScale);
-        ini.SetBoolValue("UI", "ShowPreview", showPreview);
-        ini.SetDoubleValue("UI", "PreviewSize", previewSize);
         ini.SetLongValue("UI", "MannequinColor", static_cast<long>(mannequinColor));
         ini.SetLongValue("UI", "SlotRefreshMs", slotRefreshMs);
 

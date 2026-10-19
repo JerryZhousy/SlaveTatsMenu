@@ -833,186 +833,168 @@ namespace stm::ui
                     ImGui::TextDisabled("%s: %s", Tr("$STM_Texture"), state.selected.texture.c_str());
                 }
 
-                if (Config::Get().showPreview && state.previewTexture) {
+                if (state.previewTexture) {
                     ImGui::Spacing();
 
-                    static bool s_view3D = true;
-
-                    ImGui::Text("%s:", Tr("$STM_Preview"));
+                    ImGui::Text("%s:", Tr("$STM_ModelColor"));
                     ImGui::SameLine();
-                    if (ImGui::RadioButton(Tr("$STM_Tab_3DMannequin"), s_view3D)) {
-                        s_view3D = true;
-                        render::MannequinRenderer::Get().ClearInitFailed();
+                    int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
+                    // 顺序: 先自然肉色, 再透明全息蓝
+                    if (ImGui::RadioButton(Tr("$STM_NaturalFlesh"), curCol == 1)) {
+                        Config::Get().mannequinColor = MannequinColor::kFlesh;
+                        Config::Get().Save();
                     }
                     ImGui::SameLine();
-                    if (ImGui::RadioButton(Tr("$STM_Tab_2DTexture"), !s_view3D)) {
-                        s_view3D = false;
+                    if (ImGui::RadioButton(Tr("$STM_TransparentHologram"), curCol == 0)) {
+                        Config::Get().mannequinColor = MannequinColor::kTransparent;
+                        Config::Get().Save();
                     }
 
-                    if (s_view3D) {
-                        ImGui::Text("%s:", Tr("$STM_ModelColor"));
-                        ImGui::SameLine();
-                        int curCol = (Config::Get().mannequinColor == MannequinColor::kFlesh) ? 1 : 0;
-                        // 顺序: 先自然肉色, 再透明全息蓝
-                        if (ImGui::RadioButton(Tr("$STM_NaturalFlesh"), curCol == 1)) {
-                            Config::Get().mannequinColor = MannequinColor::kFlesh;
-                            Config::Get().Save();
-                        }
-                        ImGui::SameLine();
-                        if (ImGui::RadioButton(Tr("$STM_TransparentHologram"), curCol == 0)) {
-                            Config::Get().mannequinColor = MannequinColor::kTransparent;
-                            Config::Get().Save();
-                        }
-
-                        if (!render::MannequinRenderer::Get().IsInitialized() && !render::MannequinRenderer::Get().IsInitFailed()) {
-                            auto* bsDev = RE::BSGraphics::Renderer::GetDevice();
-                            if (bsDev) {
-                                auto* d3dDev = reinterpret_cast<ID3D11Device*>(bsDev);
-                                ID3D11DeviceContext* ctx = nullptr;
-                                d3dDev->GetImmediateContext(&ctx);
-                                if (ctx) {
-                                    render::MannequinRenderer::Get().Initialize(d3dDev, ctx);
-                                    ctx->Release();
-                                }
+                    if (!render::MannequinRenderer::Get().IsInitialized() && !render::MannequinRenderer::Get().IsInitFailed()) {
+                        auto* bsDev = RE::BSGraphics::Renderer::GetDevice();
+                        if (bsDev) {
+                            auto* d3dDev = reinterpret_cast<ID3D11Device*>(bsDev);
+                            ID3D11DeviceContext* ctx = nullptr;
+                            d3dDev->GetImmediateContext(&ctx);
+                            if (ctx) {
+                                render::MannequinRenderer::Get().Initialize(d3dDev, ctx);
+                                ctx->Release();
                             }
                         }
+                    }
 
-                        if (render::MannequinRenderer::Get().IsInitFailed()) {
-                            ImGui::Spacing();
-                            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", Tr("$STM_Preview_3DInitFailed"));
-                            if (ImGui::Button(Tr("$STM_ClickToRetry"))) {
-                                render::MannequinRenderer::Get().ClearInitFailed();
-                            }
-                        } else if (render::MannequinRenderer::Get().IsInitialized()) {
-                            const float pWidth = std::max(180.0f, a_width - 30.0f);
-                            const float pHeight = 220.0f;
+                    if (render::MannequinRenderer::Get().IsInitFailed()) {
+                        ImGui::Spacing();
+                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", Tr("$STM_Preview_3DInitFailed"));
+                        if (ImGui::Button(Tr("$STM_ClickToRetry"))) {
+                            render::MannequinRenderer::Get().ClearInitFailed();
+                        }
+                    } else if (render::MannequinRenderer::Get().IsInitialized()) {
+                        const float pWidth = std::max(180.0f, a_width - 30.0f);
+                        const float pHeight = 220.0f;
 
-                            static const char* kEnlargedModalId = "###stm_3d_preview_modal";
-                            const std::string modalTitle = std::string(Tr("$STM_Preview_3DEnlarged")) + kEnlargedModalId;
-                            const bool isModalOpen = ImGui::IsPopupOpen(modalTitle.c_str());
+                        static const char* kEnlargedModalId = "###stm_3d_preview_modal";
+                        const std::string modalTitle = std::string(Tr("$STM_Preview_3DEnlarged")) + kEnlargedModalId;
+                        const bool isModalOpen = ImGui::IsPopupOpen(modalTitle.c_str());
 
-                            ID3D11ShaderResourceView* srv = nullptr;
-                            if (!isModalOpen) {
-                                if (render::MannequinRenderer::Get().GetWidth() != static_cast<std::uint32_t>(pWidth) ||
-                                    render::MannequinRenderer::Get().GetHeight() != static_cast<std::uint32_t>(pHeight)) {
-                                    render::MannequinRenderer::Get().Resize(static_cast<std::uint32_t>(pWidth), static_cast<std::uint32_t>(pHeight));
-                                }
-
-                                srv = render::MannequinRenderer::Get().RenderFrame(
-                                    reinterpret_cast<ID3D11ShaderResourceView*>(state.previewTexture),
-                                    state.color,
-                                    state.alpha,
-                                    false,
-                                    Config::Get().mannequinColor,
-                                    0.0f,
-                                    state.glowOn ? state.glowColor : nullptr
-                                );
-                            } else {
-                                srv = render::MannequinRenderer::Get().GetShaderResourceView();
+                        ID3D11ShaderResourceView* srv = nullptr;
+                        if (!isModalOpen) {
+                            if (render::MannequinRenderer::Get().GetWidth() != static_cast<std::uint32_t>(pWidth) ||
+                                render::MannequinRenderer::Get().GetHeight() != static_cast<std::uint32_t>(pHeight)) {
+                                render::MannequinRenderer::Get().Resize(static_cast<std::uint32_t>(pWidth), static_cast<std::uint32_t>(pHeight));
                             }
 
-                            if (srv) {
-                                ImGui::Image(reinterpret_cast<ImGuiMCP::ImTextureID>(srv), ImVec2(pWidth, pHeight),
-                                    ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
+                            srv = render::MannequinRenderer::Get().RenderFrame(
+                                reinterpret_cast<ID3D11ShaderResourceView*>(state.previewTexture),
+                                state.color,
+                                state.alpha,
+                                false,
+                                Config::Get().mannequinColor,
+                                0.0f,
+                                state.glowOn ? state.glowColor : nullptr
+                            );
+                        } else {
+                            srv = render::MannequinRenderer::Get().GetShaderResourceView();
+                        }
 
-                                static bool s_isDraggingLeft = false;
-                                static bool s_isDraggingRight = false;
-                                static bool s_isDraggingMiddle = false;
-                                static double s_leftClickDownTime = 0.0;
-                                static float s_leftDragDistance = 0.0f;
+                        if (srv) {
+                            ImGui::Image(reinterpret_cast<ImGuiMCP::ImTextureID>(srv), ImVec2(pWidth, pHeight),
+                                ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
 
-                                if (ImGui::IsItemHovered()) {
-                                    ImGui::SetTooltip("%s", Tr("$STM_LeftDragRotateRight_2"));
+                            static bool s_isDraggingLeft = false;
+                            static bool s_isDraggingRight = false;
+                            static bool s_isDraggingMiddle = false;
+                            static double s_leftClickDownTime = 0.0;
+                            static float s_leftDragDistance = 0.0f;
 
-                                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                                        s_isDraggingLeft = true;
-                                        s_leftClickDownTime = NowSeconds();
-                                        s_leftDragDistance = 0.0f;
-                                    }
-                                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-                                        s_isDraggingRight = true;
-                                    }
-                                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
-                                        s_isDraggingMiddle = true;
-                                    }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("%s", Tr("$STM_LeftDragRotateRight_2"));
+
+                                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                    s_isDraggingLeft = true;
+                                    s_leftClickDownTime = NowSeconds();
+                                    s_leftDragDistance = 0.0f;
                                 }
-
-                                if (s_isDraggingLeft) {
-                                    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                                        auto* io = ImGui::GetIO();
-                                        if (io) {
-                                            s_leftDragDistance += std::hypot(io->MouseDelta.x, io->MouseDelta.y);
-                                            render::MannequinRenderer::Get().Rotate(io->MouseDelta.x * 0.012f, io->MouseDelta.y * 0.012f);
-                                        }
-                                    } else {
-                                        s_isDraggingLeft = false;
-                                        const double elapsed = NowSeconds() - s_leftClickDownTime;
-                                        if (elapsed < 0.35 && s_leftDragDistance < 6.0f) {
-                                            ImGui::OpenPopup(modalTitle.c_str());
-                                        }
-                                    }
+                                if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                                    s_isDraggingRight = true;
                                 }
-
-                                if (s_isDraggingRight) {
-                                    if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-                                        auto* io = ImGui::GetIO();
-                                        if (io && io->MouseDelta.x != 0.0f) {
-                                            // 按住右键鼠标往左缩小(负值增加相机距离)，往右放大(正值减小相机距离)
-                                            render::MannequinRenderer::Get().Zoom(io->MouseDelta.x * 0.012f);
-                                        }
-                                    } else {
-                                        s_isDraggingRight = false;
-                                    }
-                                }
-
-                                if (s_isDraggingMiddle) {
-                                    if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
-                                        auto* io = ImGui::GetIO();
-                                        if (io && io->MouseDelta.y != 0.0f) {
-                                            render::MannequinRenderer::Get().Pan(-io->MouseDelta.y * 0.005f);
-                                        }
-                                    } else {
-                                        s_isDraggingMiddle = false;
-                                    }
-                                }
-
-                                // 部位不再单独提供开关: 预览部位完全跟随上方「部位」一行,
-                                // 这里只显示当前正在预览哪一部分。
-                                ImGui::TextDisabled("%s: %s%s", Tr("$STM_Part"),
-                                    PreviewPartName(render::MannequinRenderer::Get().GetCurrentPart()),
-                                    Tr("$STM_Hint_FollowsArea"));
-
-                                ImGui::TextDisabled("%s: %s", Tr("$STM_Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
-
-                                ImGui::Text("%s:", Tr("$STM_Sex"));
-                                ImGui::SameLine();
-                                int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
-                                if (ImGui::RadioButton(Tr("$STM_Female_2"), sexChoice == 0)) {
-                                    render::MannequinRenderer::Get().InitMeshWithSex(0);
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::RadioButton(Tr("$STM_Male_2"), sexChoice == 1)) {
-                                    render::MannequinRenderer::Get().InitMeshWithSex(1);
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton(Tr("$STM_SyncTarget_2"))) {
-                                    render::MannequinRenderer::Get().ReloadForPlayerSex();
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton(Tr("$STM_ResetCamera_2"))) {
-                                    render::MannequinRenderer::Get().ResetCamera();
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton(Tr("$STM_Enlarge"))) {
-                                    ImGui::OpenPopup(modalTitle.c_str());
+                                if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                                    s_isDraggingMiddle = true;
                                 }
                             }
 
-                            DrawEnlargedPreviewModal(modalTitle.c_str());
+                            if (s_isDraggingLeft) {
+                                if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                                    auto* io = ImGui::GetIO();
+                                    if (io) {
+                                        s_leftDragDistance += std::hypot(io->MouseDelta.x, io->MouseDelta.y);
+                                        render::MannequinRenderer::Get().Rotate(io->MouseDelta.x * 0.012f, io->MouseDelta.y * 0.012f);
+                                    }
+                                } else {
+                                    s_isDraggingLeft = false;
+                                    const double elapsed = NowSeconds() - s_leftClickDownTime;
+                                    if (elapsed < 0.35 && s_leftDragDistance < 6.0f) {
+                                        ImGui::OpenPopup(modalTitle.c_str());
+                                    }
+                                }
+                            }
+
+                            if (s_isDraggingRight) {
+                                if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                                    auto* io = ImGui::GetIO();
+                                    if (io && io->MouseDelta.x != 0.0f) {
+                                        // 按住右键鼠标往左缩小(负值增加相机距离)，往右放大(正值减小相机距离)
+                                        render::MannequinRenderer::Get().Zoom(io->MouseDelta.x * 0.012f);
+                                    }
+                                } else {
+                                    s_isDraggingRight = false;
+                                }
+                            }
+
+                            if (s_isDraggingMiddle) {
+                                if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+                                    auto* io = ImGui::GetIO();
+                                    if (io && io->MouseDelta.y != 0.0f) {
+                                        render::MannequinRenderer::Get().Pan(-io->MouseDelta.y * 0.005f);
+                                    }
+                                } else {
+                                    s_isDraggingMiddle = false;
+                                }
+                            }
+
+                            // 部位不再单独提供开关: 预览部位完全跟随上方「部位」一行,
+                            // 这里只显示当前正在预览哪一部分。
+                            ImGui::TextDisabled("%s: %s%s", Tr("$STM_Part"),
+                                PreviewPartName(render::MannequinRenderer::Get().GetCurrentPart()),
+                                Tr("$STM_Hint_FollowsArea"));
+
+                            ImGui::TextDisabled("%s: %s", Tr("$STM_Mesh"), render::MannequinRenderer::Get().GetMeshSourceInfo().c_str());
+
+                            ImGui::Text("%s:", Tr("$STM_Sex"));
+                            ImGui::SameLine();
+                            int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
+                            if (ImGui::RadioButton(Tr("$STM_Female_2"), sexChoice == 0)) {
+                                render::MannequinRenderer::Get().InitMeshWithSex(0);
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::RadioButton(Tr("$STM_Male_2"), sexChoice == 1)) {
+                                render::MannequinRenderer::Get().InitMeshWithSex(1);
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton(Tr("$STM_SyncTarget_2"))) {
+                                render::MannequinRenderer::Get().ReloadForPlayerSex();
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton(Tr("$STM_ResetCamera_2"))) {
+                                render::MannequinRenderer::Get().ResetCamera();
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton(Tr("$STM_Enlarge"))) {
+                                ImGui::OpenPopup(modalTitle.c_str());
+                            }
                         }
-                    } else {
-                        const float pSize = Config::Get().previewSize;
-                        ImGui::Image(state.previewTexture, ImVec2(pSize, pSize), ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+
+                        DrawEnlargedPreviewModal(modalTitle.c_str());
                     }
                 }
 
@@ -1966,7 +1948,7 @@ namespace stm::ui
 
             ImGui::Spacing();
 
-            // 3. 纹身预览与槽位策略 (Preview & Slot Policy)
+            // 3. 槽位策略 (Slot Policy)
             if (ImGui::CollapsingHeader(Tr("$STM_PreviewSlotPolicy"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Spacing();
 
@@ -1988,42 +1970,6 @@ namespace stm::ui
                     SetStatus(Tr("$STM_SlotPolicyUpdated"));
                 }
                 ImGui::TextDisabled("%s", Tr("$STM_NoteChooseWhetherTo"));
-
-                ImGui::Spacing();
-
-                // 图案预览
-                bool showPrev = config.showPreview;
-                if (ImGui::Checkbox(Tr("$STM_ShowTattooTexturePreview"), &showPrev)) {
-                    config.showPreview = showPrev;
-                    config.Save();
-                    SetStatus(Tr("$STM_PreviewToggleUpdated"));
-                }
-
-                if (config.showPreview) {
-                    ImGui::SameLine();
-                    ImGui::Text("%s:", Tr("$STM_PreviewSizes"));
-                    const float sizes[] = { 64.0f, 96.0f, 128.0f, 192.0f };
-                    for (int i = 0; i < 4; ++i) {
-                        ImGui::SameLine();
-                        char sbuf[32];
-                        std::snprintf(sbuf, sizeof(sbuf), "%.0fpx##prev_sz_%d", sizes[i], i);
-                        if (ImGui::Button(sbuf)) {
-                            config.previewSize = sizes[i];
-                            config.Save();
-                            SetStatus(Tr("$STM_Status_PreviewSizeUpdated"));
-                        }
-                    }
-
-                    ImGui::PushItemWidth(260.0f);
-                    float prevSz = config.previewSize;
-                    if (ImGui::SliderFloat(Tr("$STM_PreviewDimension"), &prevSz, 64.0f, 256.0f, "%.0f px")) {
-                        config.previewSize = prevSz;
-                    }
-                    if (ImGui::IsItemDeactivatedAfterEdit()) {
-                        config.Save();
-                    }
-                    ImGui::PopItemWidth();
-                }
 
                 ImGui::Spacing();
             }
@@ -2164,8 +2110,6 @@ namespace stm::ui
                     config.windowHeight = 720.0f;
                     config.windowAlpha = 0.95f;
                     config.fontScale = 1.0f;
-                    config.showPreview = true;
-                    config.previewSize = 96.0f;
                     config.mannequinColor = MannequinColor::kFlesh;
                     config.slotPolicy = SlotPolicy::kAutoFreeSlot;
                     config.defaultAlpha = 1.0f;
