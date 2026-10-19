@@ -137,9 +137,17 @@ namespace stm::data
                 entry.slot = item.value("slot", -1);
                 entry.section = item.value("section", "");
                 entry.name = item.value("name", "");
-                entry.color = item.value("color", 0x000000);
+                // Presets written before the tint fix (and hand-edited ones, and
+                // anything exported from a pack) carry 0x00RRGGBB. Applied as-is
+                // that is a tint at strength zero, which renders the texture
+                // untinted - the exact bug this normalisation exists to avoid.
+                // int, not unsigned: a hand-edited preset may carry a negative
+                // colour (-1 is white), and nlohmann refuses to read that into
+                // an unsigned without wrapping it here first.
+                entry.color = MakeOpaqueTint(static_cast<std::uint32_t>(item.value("color", 0)));
                 entry.alpha = item.value("alpha", 1.0f);
-                entry.glow = item.value("glow", 0x000000);
+                // 0 stays 0 here: it is "does not glow", not "glows black".
+                entry.glow = MakeOpaqueGlow(static_cast<std::uint32_t>(item.value("glow", 0)));
 
                 if (entry.name.empty() || !IsKnownArea(entry.area)) {
                     continue;

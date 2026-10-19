@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -128,6 +129,45 @@ namespace stm::diag
                 if (!lighting) {
                     result += ",mat=other";
                     continue;
+                }
+
+                // The tint is the half that decides whether an overlay is
+                // coloured at all, and it is the half no log line shows: the
+                // ledger can say 0xFFFF0000 while the material the shader
+                // actually samples still holds white. Read the material itself.
+                result += ",feat=" + std::to_string(static_cast<int>(lighting->GetFeature()));
+                result += ",matA=" + ToStr(static_cast<int>(lighting->materialAlpha * 100.0f));
+
+                // The material holding a tint says nothing about the shader
+                // reading it: the shader is picked from the property flags, and
+                // bit 21 (kFaceGenRGBTint) is what makes the tint part of the
+                // pixel shader at all. Without it the material can be red while
+                // the render stays the texture's own colour.
+                {
+                    const auto flags = shader->flags.underlying();
+                    char       buf[64]{};
+                    std::snprintf(buf, sizeof(buf), ",flg=%llX,tintFlag=%d",
+                        static_cast<unsigned long long>(flags), static_cast<int>((flags >> 21) & 1));
+                    result += buf;
+                }
+
+                if (shader->emissiveColor) {
+                    char buf[80]{};
+                    std::snprintf(buf, sizeof(buf), ",emit=%.2f/%.2f/%.2f x%.2f",
+                        shader->emissiveColor->red, shader->emissiveColor->green, shader->emissiveColor->blue,
+                        shader->emissiveMult);
+                    result += buf;
+                }
+
+                if (lighting->GetFeature() == RE::BSShaderMaterial::Feature::kFaceGenRGBTint) {
+                    // Not a NiObject, so netimmerse_cast does not apply; the
+                    // feature id is what makes the downcast sound.
+                    auto* tintMat = static_cast<RE::BSLightingShaderMaterialFacegenTint*>(material);
+                    char  tint[64]{};
+                    std::snprintf(tint, sizeof(tint), "%.2f/%.2f/%.2f",
+                        tintMat->tintColor.red, tintMat->tintColor.green, tintMat->tintColor.blue);
+                    result += ",tint=";
+                    result += tint;
                 }
 
                 auto textureSet = lighting->GetTextureSet();

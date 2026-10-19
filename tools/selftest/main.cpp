@@ -208,10 +208,11 @@ int main(int argc, char** argv)
         Check(loaded.sourceActor == "灰风", "source actor survives");
         if (loaded.entries.size() == 2) {
             Check(loaded.entries[0].area == "Body" && loaded.entries[0].slot == 0, "first entry area and slot");
-            Check(loaded.entries[0].color == 0xFF0000u, "colour survives");
+            Check(loaded.entries[0].color == 0xFFFF0000u, "legacy RGB colour lifted to an opaque tint", std::to_string(loaded.entries[0].color));
             Check(loaded.entries[0].alpha > 0.69f && loaded.entries[0].alpha < 0.71f, "alpha survives");
-            Check(loaded.entries[0].glow == 0x00FF00u, "glow survives");
+            Check(loaded.entries[0].glow == 0xFF00FF00u, "legacy RGB glow lifted to an opaque tint", std::to_string(loaded.entries[0].glow));
             Check(loaded.entries[1].area == "Face", "lower-case area normalised on load", loaded.entries[1].area);
+            Check(loaded.entries[1].color == 0xFF000000u, "black ink becomes an opaque black tint, not strength zero", std::to_string(loaded.entries[1].color));
             Check(loaded.entries[1].glow == 0x000000u, "missing glow defaults to 0");
         }
     }

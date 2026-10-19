@@ -257,12 +257,22 @@ namespace stm::ui
             }
         }
 
+        // Packs a UI colour into the integer SlaveTats stores in its ledger and
+        // hands to RaceMenu as the overlay tint: 0xAARRGGBB, top byte first.
+        //
+        // The top byte is the tint's STRENGTH. Returning 0x00RRGGBB here is why
+        // "pick red" used to change nothing at all in game: the shader multiplies
+        // the diffuse by the tint at strength alpha, so strength 0 leaves the
+        // texture's own RGB untouched. That is why a black mask rendered black
+        // and, once the mask was repainted white, rendered white - the chosen
+        // colour never entered the sum. Full strength keeps black ink black and
+        // lets every other colour through.
         std::uint32_t PackColor(const float a_color[3])
         {
             const auto r = static_cast<std::uint32_t>(std::clamp(a_color[0], 0.0f, 1.0f) * 255.0f) & 0xFF;
             const auto g = static_cast<std::uint32_t>(std::clamp(a_color[1], 0.0f, 1.0f) * 255.0f) & 0xFF;
             const auto b = static_cast<std::uint32_t>(std::clamp(a_color[2], 0.0f, 1.0f) * 255.0f) & 0xFF;
-            return (r << 16) | (g << 8) | b;
+            return data::kOpaqueTint | (r << 16) | (g << 8) | b;
         }
 
         std::string CurrentArea()

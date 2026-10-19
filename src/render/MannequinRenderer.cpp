@@ -198,35 +198,30 @@ namespace stm::render
                     alpha = BodyColor.a;
                 }
 
-                // 叠加纹身贴图。单色线稿照旧"贴图色 x 墨水色"(与游戏内一致);
-                // 但贴图自带彩色、墨色又还是默认黑时, 直接呈现贴图原色, 避免彩绘/口红等被乘黑。
+                // 叠加纹身贴图。
+                //
+                // 游戏里 RaceMenu / SlaveTats 的 overlay 用的不是"贴图 x 墨水色"的乘法,
+                // 而是 Skyrim 的 FaceGen RGB Tint(皮肤染色)着色器:
+                //
+                //     tint  = T * b * 2
+                //     tint -= tint * b
+                //     out   = b * b + tint        =>  out = b^2 + 2*T*b*(1-b)
+                //
+                // b 是贴图 RGB, T 是墨色。b=0 或 b=1 时 T 的系数 2b(1-b) 正好是 0,
+                // 所以纯黑蒙版永远黑、纯白蒙版永远白, 选什么颜色都没用 —— 这正是
+                // Bunny 原版(全黑)和上一版(全白)在游戏里都染不上色的原因。
+                // 只有中灰蒙版才带得动颜色, 最大值在 b=0.5(系数 0.5)。
+                //
+                // 预览必须用同一条公式, 否则它给出的颜色和实机对不上, 又是在骗人。
                 if (Params.x > 0.5f) {
                     float4 tex = TattooTexture.Sample(SamplerLinear, input.UV);
                     float tatAlpha = tex.a * TattooColor.a;
                     if (tatAlpha > 0.005f) {
                         float3 ink = TattooColor.rgb;
-                        float  inkMax = max(ink.r, max(ink.g, ink.b));
-                        float  texMax = max(tex.r, max(tex.g, tex.b));
-                        float  texMin = min(tex.r, min(tex.g, tex.b));
-                        float  texChroma = texMax - texMin;
+                        float3 base = tex.rgb;
+                        float3 tatRgb = base * base + 2.0f * ink * base * (1.0f - base);
 
-                        float3 tatRgb;
-                        if (texChroma > 0.08f && inkMax < 0.05f) {
-                            // 贴图自带彩色且使用默认黑墨色: 保留原色彩绘/口红
-                            tatRgb = tex.rgb;
-                        } else if (texChroma > 0.08f) {
-                            // 彩色贴图自选墨色: 乘色叠加
-                            tatRgb = tex.rgb * ink;
-                        } else {
-                            // 单色/灰度/线稿/黑白蒙版(包括纯黑RGB仅靠Alpha出形的贴图如Bunny):
-                            // 灰度纹身本质是笔触形状与抗锯齿, 用户选定墨色时以墨色为基准。
-                            // 若底图RGB全黑(texMax < 0.02), 表明图形纯靠Alpha蒙版, 直接采用墨水色;
-                            // 若底图有灰度(如0.23), 进行归一化后乘墨色, 避免浅灰线稿被压成死黑。
-                            float3 monoNorm = (texMax > 0.02f) ? (tex.rgb / texMax) : float3(1.0f, 1.0f, 1.0f);
-                            tatRgb = monoNorm * ink;
-                        }
-
-                        // 结合立体漫反射与明暗体积, 纯正饱和度直接混合, 杜绝亮度污染产生的暗红/浑浊感
+                        // 结合立体漫反射与明暗体积
                         float3 tatLit = tatRgb * (shadeBase + 0.20f * shadeW * volume);
                         color = lerp(color, tatLit, tatAlpha);
 
