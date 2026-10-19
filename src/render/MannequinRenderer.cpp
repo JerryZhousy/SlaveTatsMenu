@@ -206,9 +206,25 @@ namespace stm::render
                     if (tatAlpha > 0.005f) {
                         float3 ink = TattooColor.rgb;
                         float  inkMax = max(ink.r, max(ink.g, ink.b));
-                        float  texChroma = max(tex.r, max(tex.g, tex.b)) - min(tex.r, min(tex.g, tex.b));
+                        float  texMax = max(tex.r, max(tex.g, tex.b));
+                        float  texMin = min(tex.r, min(tex.g, tex.b));
+                        float  texChroma = texMax - texMin;
 
-                        float3 tatRgb = (texChroma > 0.08f && inkMax < 0.05f) ? tex.rgb : (tex.rgb * ink);
+                        float3 tatRgb;
+                        if (texChroma > 0.08f && inkMax < 0.05f) {
+                            // 贴图自带彩色且使用默认黑墨色: 保留原色彩绘/口红
+                            tatRgb = tex.rgb;
+                        } else if (texChroma > 0.08f) {
+                            // 彩色贴图自选墨色: 乘色叠加
+                            tatRgb = tex.rgb * ink;
+                        } else {
+                            // 单色/灰度/线稿/黑白蒙版(包括纯黑RGB仅靠Alpha出形的贴图如Bunny):
+                            // 灰度纹身本质是笔触形状与抗锯齿, 用户选定墨色时以墨色为基准。
+                            // 若底图RGB全黑(texMax < 0.02), 表明图形纯靠Alpha蒙版, 直接采用墨水色;
+                            // 若底图有灰度(如0.23), 进行归一化后乘墨色, 避免浅灰线稿被压成死黑。
+                            float3 monoNorm = (texMax > 0.02f) ? (tex.rgb / texMax) : float3(1.0f, 1.0f, 1.0f);
+                            tatRgb = monoNorm * ink;
+                        }
 
                         // 结合立体漫反射与明暗体积, 纯正饱和度直接混合, 杜绝亮度污染产生的暗红/浑浊感
                         float3 tatLit = tatRgb * (shadeBase + 0.20f * shadeW * volume);
