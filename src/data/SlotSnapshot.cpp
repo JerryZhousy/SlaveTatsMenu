@@ -27,6 +27,7 @@ namespace stm::data
     {
         const auto now = std::chrono::steady_clock::now();
 
+        std::uint64_t seq = 0;
         {
             std::scoped_lock lock(_mutex);
 
@@ -52,12 +53,13 @@ namespace stm::data
             _reqArea = a_area;
             _lastRequest = now;
             _inFlight = true;
+            seq = ++_requestSeq;
         }
 
-        PostToGameThread([a_actor, a_area]() { SlotSnapshot::Get().Build(a_actor, a_area); });
+        PostToGameThread([a_actor, a_area, seq]() { SlotSnapshot::Get().Build(a_actor, a_area, seq); });
     }
 
-    void SlotSnapshot::Build(RE::ActorHandle a_actor, const std::string& a_area)
+    void SlotSnapshot::Build(RE::ActorHandle a_actor, const std::string& a_area, std::uint64_t a_seq)
     {
         std::vector<SlotInfo> slots;
 
@@ -105,6 +107,15 @@ namespace stm::data
         }
 
         std::scoped_lock lock(_mutex);
+
+        // A newer request was posted while this one was running: publishing now
+        // would label fresh slots with the old area and stop the panel from
+        // asking again for a whole refresh interval. Leave _inFlight to the
+        // newer build, which owns it.
+        if (a_seq != _requestSeq) {
+            return;
+        }
+
         _slots = std::move(slots);
         _area = a_area;
         _actorFormID = actor ? actor->GetFormID() : 0;

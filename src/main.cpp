@@ -77,9 +77,11 @@ namespace
                     stm::diag::UninstallCallTrace();
                 }
 
-                // Warm up the slot limits on this single thread: they are loaded
-                // lazily from skee64.ini and would otherwise be raced for by the
-                // task queue and the render callback.
+                // Parse the slot limits here, on one thread, rather than letting
+                // the first MaxSlots() call (from a frame or from the task queue)
+                // pay for the INI read. Not required for correctness - the
+                // parse is a function-local static now - but it keeps the first
+                // preview frame from doing file I/O.
                 for (const char* area : { "Body", "Face", "Hands", "Feet" }) {
                     (void)stm::ng::MaxSlots(area);
                 }

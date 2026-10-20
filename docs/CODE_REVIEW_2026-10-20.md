@@ -15,6 +15,36 @@ Severity: **H** = crash / UB / freeze, **M** = wrong behaviour or visible hitch,
 
 ---
 
+## Fix status (same day, second pass)
+
+| # | Status | Where |
+|---|---|---|
+| B-1 | ✅ fixed | `MannequinRenderer` parks replaced targets and releases them a frame later (`RetiredTargets`, `_frame`); the modal no longer resizes on the frame it appears; the retry button reloads the texture `Shutdown()` freed |
+| B-2 | ✅ fixed | `PresetXml`: `g_scanning` + `ScanScope` make `PresetsLoaded()` false during a re-scan; `TryFindPreset()` / `TryPresetCount()` use `try_lock` for the game thread; `AddonMain` uses them and reports "busy" instead of "not found" |
+| B-3 | ✅ fixed | `TargetState` guards `_handle` with a mutex; `Set()` takes the engine handle outside the lock |
+| B-4 | ✅ fixed | `SlotSnapshot` request sequence; a superseded `Build()` no longer publishes |
+| B-5 | ✅ fixed | `LoadSlotLimits()` → `Slots()`, a function-local static; the hand-rolled `loaded` flag is gone |
+| B-6 | ✅ fixed | `core/Paths.h::GameRoot()` (error_code + module fallback) for `Config`/`PresetStore`; `PresetDirectory()` uses the error_code overload |
+| B-7 | ✅ fixed | `TextureLoader` refuses DDS files over 64 MB |
+| B-8 | ✅ fixed | `g_watches` is a `std::deque` |
+| B-9 | ✅ fixed | dead `area == "back"` branch removed |
+| B-10 | ✅ fixed | the ignored-slot case is logged and reported with `$STM_Ops_PlacedAutoSlot` |
+| P-1 | ◑ partial | keys are interned once via `jc::Key` (the per-entry interner churn is gone). Moving `Rebuild()` off the render thread was **not** done - see note below |
+| P-2 | ✅ fixed | `KnownTargetCountCached()` (1 s) |
+| P-3 | ✅ fixed | `Config::Save()` on `IsItemDeactivatedAfterEdit()` |
+| P-4 | ✅ fixed | `ContainsNoCase()` (no per-entry lowercase copy); the section keyword is lowered once |
+| P-5 | ◑ partial | the cache mutex no longer covers the file read/decode. Decoding still happens on the render thread - see note below |
+| P-6 | ✅ fixed | `_dirty` + parameter hash skip the whole pass; `ApplyPendingMeshes()` checks an atomic first |
+| P-7 | ❌ retracted | **This finding was wrong.** `LoadTriFile()` already caches by path + last-write-time (`TriFile.cpp:225-272`), so a preset switch re-uses the parsed file. No change made |
+| P-8 | ◑ partial | `CurrentArea()` called once; `Tr()` uses a transparent hash (no temporary `std::string` per lookup). `SlotSnapshot::Copy()` per frame left as is - measured at ~36 SSO string copies, not worth a revision cache |
+
+Two items are deliberately left open:
+
+- **P-1, off-thread rebuild.** `TattooDatabase` is read by the UI every frame and has no lock; making `Rebuild()` asynchronous means adding a lock and a swap to every accessor, which is a bigger change than the rest of this pass and needs in-game testing. The interning fix removes the per-entry cost that was the bulk of the win.
+- **P-5, async texture decode.** Moving the decode off the render thread needs a mailbox and a D3D-resource handoff on the render thread; narrowing the lock is the safe half. Worth doing next time the preview path is touched.
+
+---
+
 ## Summary
 
 | # | Sev | Area | Finding |
@@ -35,7 +65,6 @@ Severity: **H** = crash / UB / freeze, **M** = wrong behaviour or visible hitch,
 | P-4 | M | `data/CacheParser` | Filtering allocates two lowercase copies per entry per keystroke |
 | P-5 | M | `render/TextureLoader` | DDS decode on the render thread, with the global cache mutex held |
 | P-6 | M | `render/MannequinRenderer` | Full scene re-render + ~20 COM get/release per frame even when idle |
-| P-7 | M | `obody/AddonMain` | `.tri` file re-read and re-parsed on every preset switch |
 | P-8 | L | `ui/UiMain` | Per-frame `SlotSnapshot::Copy()`, label strings, `CurrentArea()` twice, `Tr()` temporaries |
 
 ---
@@ -311,16 +340,12 @@ Fix: keep a dirty flag (camera, colour, alpha, texture, mesh generation) and, wh
 existing `_shaderResourceView` without touching the pipeline. Also skip `ApplyPendingMeshes()` when
 a cheap atomic "result ready" flag is false, instead of taking the mutex every frame.
 
-### P-7 (M) The OBody `.tri` file is re-parsed on every preset switch
+### P-7 (retracted) The OBody `.tri` file is re-parsed on every preset switch
 
-`src/obody/AddonMain.cpp:377-383`
-
-`ApplyImpl()` calls `LoadTriFile(SiblingTriPath(nifPath))` on every apply. A preset switch triggers
-a body-only rebuild, so browsing presets re-reads and re-parses the same `.tri` (hundreds of KB to
-several MB of offsets) each time, on the mesh worker.
-
-Fix: cache the parsed `TriFile` keyed by path + `last_write_time`, guarded by a mutex. The data is
-immutable and there are at most four bodies in play.
+This was wrong: `LoadTriFile()` (`src/obody/TriFile.cpp:225-272`) already caches the
+parsed file by path + last-write-time and holds two entries, which is exactly what a preset switch
+needs. `ApplyImpl`'s call is a cache hit, not a re-parse. Left here so the next reader does not
+re-derive the same false positive from the call site alone.
 
 ### P-8 (L) Per-frame allocation in the UI hot path
 
@@ -347,7 +372,7 @@ immutable and there are at most four bodies in play.
    then move `Rebuild()` off the render thread.
 4. **P-2 / P-3** — two one-line-per-site fixes (cache the count, save on deactivate).
 5. **B-3 / B-5** — atomic `FormID` for the target, `call_once` for slot limits.
-6. **P-4 / P-5 / P-7** — precompute lowercase fields, move texture decode, cache the `.tri`.
+6. **P-4 / P-5** — precompute lowercase fields, move texture decode.
 7. **P-6** — dirty-flag the preview render.
 8. **B-4, B-6, B-7, B-8, B-9, B-10, P-8** — cheap correctness/cleanup, any time.
 

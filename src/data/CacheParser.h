@@ -83,6 +83,11 @@ namespace stm::data
 
     bool IsKnownArea(std::string_view a_area);
 
+    // Case-insensitive substring test. a_lowerNeedle must already be lowercase;
+    // the haystack is compared in place, without building a lowercase copy (see
+    // FilterTattoos, which runs this over every entry on each keystroke).
+    bool ContainsNoCase(std::string_view a_haystack, std::string_view a_lowerNeedle);
+
     // Parses Data/slavetats_cache.json as SlaveTatsNG writes it:
     //   domain -> area -> section -> [ {name, section, area, texture, ...} ]
     // The area map keys have inconsistent casing ("BODY", "face", ...), so each

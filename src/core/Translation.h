@@ -13,6 +13,28 @@ namespace stm
     class Translation
     {
     public:
+        // Tr() runs for every visible label, every frame, and each call does two
+        // lookups. A transparent hash lets those take the const char* key
+        // directly instead of materialising a std::string per lookup.
+        struct TransparentHash
+        {
+            using is_transparent = void;
+
+            std::size_t operator()(std::string_view a_key) const noexcept
+            {
+                return std::hash<std::string_view>{}(a_key);
+            }
+
+            // Exact match, so a literal does not become ambiguous between the
+            // string_view and std::string overloads above.
+            std::size_t operator()(const char* a_key) const noexcept
+            {
+                return std::hash<std::string_view>{}(a_key ? std::string_view(a_key) : std::string_view{});
+            }
+        };
+
+        using Dictionary = std::unordered_map<std::string, std::string, TransparentHash, std::equal_to<>>;
+
         static Translation& Get();
 
         // Normalizes language identifier to canonical uppercase (e.g. "zh", "chs" -> "CHINESE", "en" -> "ENGLISH")
@@ -37,11 +59,11 @@ namespace stm
 
         static std::vector<std::filesystem::path> GetSearchDirectories();
         static std::filesystem::path FindTranslationFile(std::string_view a_lang);
-        static bool LoadFileToMap(const std::filesystem::path& a_path, std::unordered_map<std::string, std::string>& a_map);
+        static bool LoadFileToMap(const std::filesystem::path& a_path, Dictionary& a_map);
 
         std::string _currentLang = "ENGLISH";
-        std::unordered_map<std::string, std::string> _fallbackDict; // Always English
-        std::unordered_map<std::string, std::string> _activeDict;   // Active language
+        Dictionary  _fallbackDict; // Always English
+        Dictionary  _activeDict;   // Active language
 
         // GetAvailableLanguages() is called from the settings tab every frame, so
         // its directory scan result is cached and invalidated by Load().

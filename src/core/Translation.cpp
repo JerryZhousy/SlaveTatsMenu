@@ -171,7 +171,7 @@ namespace stm
         return result;
     }
 
-    bool Translation::LoadFileToMap(const std::filesystem::path& a_path, std::unordered_map<std::string, std::string>& a_map)
+    bool Translation::LoadFileToMap(const std::filesystem::path& a_path, Dictionary& a_map)
     {
         std::ifstream file(a_path, std::ios::binary);
         if (!file.is_open()) {

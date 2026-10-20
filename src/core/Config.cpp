@@ -1,4 +1,5 @@
 #include "core/Config.h"
+#include "core/Paths.h"
 #include "core/Translation.h"
 
 #include "SimpleIni.h"
@@ -14,7 +15,7 @@ namespace stm
     std::filesystem::path Config::IniPath()
     {
         static const std::filesystem::path s_path =
-            std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SlaveTatsMenu" / "SlaveTatsMenu.ini";
+            paths::GameRoot() / "Data" / "SKSE" / "Plugins" / "SlaveTatsMenu" / "SlaveTatsMenu.ini";
         return s_path;
     }
 

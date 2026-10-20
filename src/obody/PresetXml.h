@@ -38,12 +38,22 @@ namespace stm::obody
     //
     // No disk I/O once the database is loaded - but the first call loads it,
     // which is expensive. Call this from the worker thread, not the game thread;
-    // PresetsLoaded() is the cheap question the game thread is allowed to ask.
+    // TryFindPreset() is the variant the game thread is allowed to use.
     std::shared_ptr<const BodyPreset> FindPreset(std::string_view a_name);
+
+    // Non-blocking lookup for the game thread.
+    //
+    // FindPreset() takes the database mutex, and RefreshPresets() holds that
+    // mutex for the whole folder scan (tens of megabytes of XML). A caller that
+    // cannot afford to wait must not queue behind it, so this returns nullptr
+    // when the lock is busy. The worker resolves the preset again in ApplyImpl,
+    // so a miss here only means "not known yet", never "does not exist".
+    std::shared_ptr<const BodyPreset> TryFindPreset(std::string_view a_name);
 
     // True once the database has been scanned at least once. Lets the game
     // thread decide whether it can answer "does this preset exist" without
-    // paying for the scan itself.
+    // paying for the scan itself. False while a re-scan is in progress, so the
+    // answer can never be followed by a blocking FindPreset().
     bool PresetsLoaded();
 
     // Rate-limited re-scan: picks up presets dropped in mid-session. Stats every
@@ -51,6 +61,10 @@ namespace stm::obody
     // the database was actually rebuilt.
     bool RefreshPresets();
 
+    // Non-blocking preset count, for log lines on the game thread.
+    std::size_t TryPresetCount();
+
+    // Blocking variant, for the worker and the offline test.
     std::size_t PresetCount();
 
     const std::string& PresetDirectory();

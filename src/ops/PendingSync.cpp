@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <mutex>
 #include <vector>
 
@@ -50,7 +51,10 @@ namespace stm::ops::pending
         };
 
         std::mutex         g_mutex;
-        std::vector<Watch> g_watches;
+        // A deque, not a vector: FindOrAdd() hands out a pointer into it, and a
+        // vector reallocating on the next push would dangle it. The code happens
+        // to use each pointer immediately today; this removes the trap.
+        std::deque<Watch>  g_watches;
         std::atomic_bool   g_inFlight{ false };
         Clock::time_point  g_lastSample{};
         bool               g_warnedNoJc = false;

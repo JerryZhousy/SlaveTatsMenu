@@ -14,8 +14,14 @@ namespace stm::data
 
     RE::Actor* TargetState::Resolve() const
     {
-        if (_handle) {
-            if (auto* actor = _handle.get().get()) {
+        RE::ActorHandle handle;
+        {
+            std::scoped_lock lock(_mutex);
+            handle = _handle;
+        }
+
+        if (handle) {
+            if (auto* actor = handle.get().get()) {
                 return actor;
             }
         }
@@ -32,15 +38,15 @@ namespace stm::data
 
     void TargetState::Set(RE::Actor* a_actor)
     {
-        if (a_actor) {
-            _handle = a_actor->GetHandle();
-        } else {
-            _handle = {};
-        }
+        const auto handle = a_actor ? a_actor->GetHandle() : RE::ActorHandle{};
+
+        std::scoped_lock lock(_mutex);
+        _handle = handle;
     }
 
     void TargetState::ResetToPlayer()
     {
+        std::scoped_lock lock(_mutex);
         _handle = {};
     }
 

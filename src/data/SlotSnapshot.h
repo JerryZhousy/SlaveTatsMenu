@@ -41,8 +41,10 @@ namespace stm::data
         // interval has not elapsed.
         void Request(RE::ActorHandle a_actor, std::string a_area);
 
-        // Rebuilds the snapshot. Task queue only.
-        void Build(RE::ActorHandle a_actor, const std::string& a_area);
+        // Rebuilds the snapshot. Task queue only. a_seq is the request it
+        // answers; a build that a newer request has superseded is dropped
+        // instead of publishing a stale area over a fresh one.
+        void Build(RE::ActorHandle a_actor, const std::string& a_area, std::uint64_t a_seq);
 
         // Thread-safe copy of the current snapshot.
         View Copy() const;
@@ -71,5 +73,11 @@ namespace stm::data
         // frame while the previous one was still queued, because _valid only
         // becomes true once the task actually runs.
         bool _inFlight = false;
+
+        // Bumped by every accepted request. A build carries the value it was
+        // posted with, so a slow one cannot overwrite the result of a newer one
+        // (which used to leave the panel on "Reading slots" for a refresh
+        // interval after a fast area switch).
+        std::uint64_t _requestSeq = 0;
     };
 }

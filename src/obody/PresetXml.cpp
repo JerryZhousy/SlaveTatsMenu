@@ -228,14 +228,36 @@ namespace stm::obody
         // g_mutex for the whole folder, and the game thread asking "is it ready
         // yet" must not queue behind that.
         std::atomic<bool> g_loadedFlag{ false };
+        // True while a scan holds g_mutex. g_loadedFlag alone is not enough: it
+        // stays true during a re-scan, so a game-thread caller would see "ready"
+        // and then block in FindPreset() for the entire folder. PresetsLoaded()
+        // consults both.
+        std::atomic<bool> g_scanning{ false };
         std::chrono::steady_clock::time_point g_lastScan{};
+
+        // Sets g_scanning for the duration of a scan, before the mutex is taken.
+        struct ScanScope
+        {
+            ScanScope() { g_scanning.store(true, std::memory_order_release); }
+            ~ScanScope() { g_scanning.store(false, std::memory_order_release); }
+            ScanScope(const ScanScope&) = delete;
+            ScanScope& operator=(const ScanScope&) = delete;
+        };
     }
 
     const std::string& PresetDirectory()
     {
-        static const std::string s_directory = (fs::current_path() / "Data" / "CalienteTools" / "BodySlide" /
-                                                "SliderPresets")
-                                                   .string();
+        // current_path() throws when it is unavailable, and this sits in a
+        // function-local static initialiser reached from a render callback: an
+        // exception there is std::terminate. Query it with an error_code.
+        static const std::string s_directory = [] {
+            std::error_code ec;
+            auto            root = fs::current_path(ec);
+            if (ec) {
+                root = fs::path(".");
+            }
+            return (root / "Data" / "CalienteTools" / "BodySlide" / "SliderPresets").string();
+        }();
         return s_directory;
     }
 
@@ -373,15 +395,35 @@ namespace stm::obody
         return it == g_db.byName.end() ? nullptr : it->second;
     }
 
+    std::shared_ptr<const BodyPreset> TryFindPreset(std::string_view a_name)
+    {
+        // Never triggers a scan and never waits for one: this runs on the game
+        // thread, where a few hundred milliseconds behind g_mutex is a freeze.
+        std::unique_lock lock(g_mutex, std::try_to_lock);
+        if (!lock.owns_lock() || !g_loaded) {
+            return nullptr;
+        }
+
+        const auto it = g_db.byName.find(ToLower(a_name));
+        return it == g_db.byName.end() ? nullptr : it->second;
+    }
+
     bool PresetsLoaded()
     {
-        // No lock: this is the question the game thread asks, and the answer only
-        // ever goes false -> true.
-        return g_loadedFlag.load(std::memory_order_acquire);
+        // No lock: this is the question the game thread asks, and it must not
+        // queue behind the scanner. It answers false while a scan is in progress
+        // as well as before the first one, so "ready" can never be followed by a
+        // call that blocks on g_mutex for the whole folder.
+        return g_loadedFlag.load(std::memory_order_acquire) && !g_scanning.load(std::memory_order_acquire);
     }
 
     bool RefreshPresets()
     {
+        // Set before the lock: this is a re-scan, so g_loadedFlag is still true
+        // and the game thread would otherwise think the database is ready and
+        // then block on g_mutex for the whole folder.
+        ScanScope scanning;
+
         std::scoped_lock lock(g_mutex);
 
         if (!g_loaded) {
@@ -412,6 +454,15 @@ namespace stm::obody
         std::scoped_lock lock(g_mutex);
         if (!g_loaded) {
             LoadDatabaseLocked();
+        }
+        return g_db.byName.size();
+    }
+
+    std::size_t TryPresetCount()
+    {
+        std::unique_lock lock(g_mutex, std::try_to_lock);
+        if (!lock.owns_lock() || !g_loaded) {
+            return 0;
         }
         return g_db.byName.size();
     }

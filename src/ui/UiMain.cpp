@@ -116,6 +116,23 @@ namespace stm::ui
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - s_start).count();
         }
 
+        // The header line is drawn every frame, but the number of actors on
+        // SlaveTatsNG's known-targets list changes only when this plugin
+        // registers one. Reading it is a JContainers DB solve plus an array
+        // count, so it is cached and refreshed at most once a second.
+        int KnownTargetCountCached()
+        {
+            static int    s_count = -1;
+            static double s_at = 0.0;
+
+            const double now = NowSeconds();
+            if (s_count < 0 || (now - s_at) > 1.0) {
+                s_count = ng::KnownTargetCount();
+                s_at = now;
+            }
+            return s_count;
+        }
+
         // Everything below this point touches the engine, JContainers or the
         // task-queue-shared state directly, which is only legal on the game's main
         // thread. The framework does call us there today, but if that ever stops
@@ -223,7 +240,8 @@ namespace stm::ui
 
         bool IsBackTattoo(const data::TattooEntry& a_entry)
         {
-            if (a_entry.area == "back") return true;
+            // `area` is canonical here (Body/Face/Hands/Feet), so it carries no
+            // "back" hint - the name, section and texture path are all we have.
             auto containsCaseInsensitive = [](std::string_view str, std::string_view sub) {
                 if (sub.empty()) return true;
                 auto it = std::search(str.begin(), str.end(), sub.begin(), sub.end(),
@@ -781,8 +799,13 @@ namespace stm::ui
                 const float availW = std::max(180.0f, ImGui::GetContentRegionAvail().x);
                 const float availH = std::max(180.0f, ImGui::GetContentRegionAvail().y - 36.0f);
 
-                if (render::MannequinRenderer::Get().GetWidth() != static_cast<std::uint32_t>(availW) ||
-                    render::MannequinRenderer::Get().GetHeight() != static_cast<std::uint32_t>(availH)) {
+                // Not on the frame the popup appears: the inspector has already
+                // handed its own view to ImGui on that frame, and resizing here
+                // would release the texture the draw list still points at. One
+                // frame of upscaling is invisible; the next frame resizes.
+                if (!ImGui::IsWindowAppearing() &&
+                    (render::MannequinRenderer::Get().GetWidth() != static_cast<std::uint32_t>(availW) ||
+                        render::MannequinRenderer::Get().GetHeight() != static_cast<std::uint32_t>(availH))) {
                     render::MannequinRenderer::Get().Resize(static_cast<std::uint32_t>(availW), static_cast<std::uint32_t>(availH));
                 }
 
@@ -927,6 +950,14 @@ namespace stm::ui
                         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", Tr("$STM_Preview_3DInitFailed"));
                         if (ImGui::Button(Tr("$STM_ClickToRetry"))) {
                             render::MannequinRenderer::Get().ClearInitFailed();
+                            // Shutdown() dropped every cached tattoo texture, so
+                            // the handle held in the UI state is stale now. Drop
+                            // it and let the reload path fetch it again.
+                            const std::string path = state.previewPath;
+                            state.previewPath.clear();
+                            state.previewTexture = nullptr;
+                            state.previewLoadedPath.clear();
+                            UpdatePreview(path);
                         }
                     } else if (render::MannequinRenderer::Get().IsInitialized()) {
                         const float pWidth = std::max(180.0f, a_width - 30.0f);
@@ -1186,7 +1217,12 @@ namespace stm::ui
             ImGui::Separator();
             ImGui::Spacing();
 
-            const std::string area = CurrentArea().empty() ? std::string("Body") : CurrentArea();
+            // Computed once: CurrentArea() returns a std::string by value and
+            // this used to call it twice on the same line.
+            std::string area = CurrentArea();
+            if (area.empty()) {
+                area = "Body";
+            }
 
             ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s (%s):", Tr("$STM_SlotStatus"), area.c_str());
 
@@ -1422,7 +1458,7 @@ namespace stm::ui
                 Tr("$STM_Jcontainers"),
                 jc::Ready() ? Tr("$STM_Status_Ok") : Tr("$STM_Status_Unavailable"),
                 Tr("$STM_RegisteredActors"),
-                ng::KnownTargetCount());
+                KnownTargetCountCached());
 
             DrawTargetRow();
             DrawAreaRow();
@@ -2172,6 +2208,11 @@ namespace stm::ui
                 };
                 if (ImGui::ColorEdit3(Tr("$STM_Settings_DefaultInkColor"), inkColor)) {
                     config.defaultColor = PackColor(inkColor);
+                }
+                // Save on release, not on every frame of a drag: Config::Save()
+                // re-reads the INI, rewrites it and logs, which used to happen
+                // ~60 times a second while the picker was moving.
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
                     config.Save();
                 }
 

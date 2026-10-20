@@ -73,6 +73,26 @@ namespace stm::data
         return std::find(areas.begin(), areas.end(), a_area) != areas.end();
     }
 
+    bool ContainsNoCase(std::string_view a_haystack, std::string_view a_lowerNeedle)
+    {
+        if (a_lowerNeedle.empty()) {
+            return true;
+        }
+        if (a_lowerNeedle.size() > a_haystack.size()) {
+            return false;
+        }
+
+        // No lowercase copy of the haystack: filtering runs over the whole
+        // catalogue on every keystroke, and building two std::strings per entry
+        // was the expensive part of typing in the search box.
+        const auto it = std::search(a_haystack.begin(), a_haystack.end(),
+            a_lowerNeedle.begin(), a_lowerNeedle.end(),
+            [](char a_lhs, char a_rhs) {
+                return static_cast<char>(std::tolower(static_cast<unsigned char>(a_lhs))) == a_rhs;
+            });
+        return it != a_haystack.end();
+    }
+
     std::vector<TattooEntry> ParseCacheJson(std::string_view a_json, std::string* a_error)
     {
         std::vector<TattooEntry> result;
@@ -178,7 +198,7 @@ namespace stm::data
                 continue;
             }
             if (!keyword.empty()) {
-                if (ToLower(entry.name).find(keyword) == std::string::npos && ToLower(entry.section).find(keyword) == std::string::npos) {
+                if (!ContainsNoCase(entry.name, keyword) && !ContainsNoCase(entry.section, keyword)) {
                     continue;
                 }
             }

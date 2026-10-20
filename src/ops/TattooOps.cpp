@@ -349,6 +349,17 @@ namespace stm::ops
             // Its return value is also the only report on that internal sync:
             // with the entry present in the ledger the add cannot have failed,
             // so "false" means the sync it was asked to run was dropped.
+            //
+            // Reaching here with a slot selected means the explicit-slot branch
+            // was skipped - JContainers is unavailable, so the slot could not be
+            // inspected - and the request is about to be ignored. Say so in the
+            // result instead of reporting a plain "applied".
+            const bool slotIgnored = a_request.targetSlot >= 0 && !jc::Ready();
+            if (slotIgnored) {
+                SKSE::log::warn("Ops: JContainers unavailable, requested slot {} in {} cannot be honoured - using the first free slot",
+                    a_request.targetSlot, a_request.tattoo.area);
+            }
+
             const auto status = ng::SimpleAddTattoo(actor, section, name, a_request.color, a_request.alpha, true);
             const int landed = FindAppliedSlot(actor, section, name, nullptr);
             data::SlotSnapshot::Get().Invalidate();
@@ -387,7 +398,7 @@ namespace stm::ops
                 PushOutcome("Apply",
                     name,
                     actor,
-                    Tr("$STM_Ops_AppliedToTarget"),
+                    slotIgnored ? Tr("$STM_Ops_PlacedAutoSlot") : Tr("$STM_Ops_AppliedToTarget"),
                     Tr("$STM_Ops_RecordedLedgerPostponed"),
                     syncStatus);
             } else if (status == ng::Status::kUnavailable) {

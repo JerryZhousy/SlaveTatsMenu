@@ -83,7 +83,23 @@ namespace stm::jc
             }
             return true;
         }
+
+        // JContainers' getStr wants a default; interning "" once keeps the hot
+        // path free of a BSFixedString construction per call.
+        const RE::BSFixedString& EmptyDefault()
+        {
+            static const RE::BSFixedString* const s_empty = new RE::BSFixedString("");
+            return *s_empty;
+        }
     }
+
+    // The object is intentionally leaked: the characters live in the engine's
+    // string pool, which is torn down after this DLL's static destructors run.
+    // A Key is meant to be held in a function-local static anyway, so there is
+    // exactly one allocation per distinct key for the life of the process.
+    Key::Key(const char* a_literal) :
+        _value(new RE::BSFixedString(a_literal))
+    {}
 
     void InstallListener()
     {
@@ -213,6 +229,33 @@ namespace stm::jc
         const RE::BSFixedString value = g_fn.map_get_str(g_domain, a_obj.id, Bs(a_key), Bs(a_default));
         const char* const        chars = value.c_str();
         return chars ? std::string(chars) : std::string(a_default);
+    }
+
+    std::string MapGetStr(ObjId a_obj, const Key& a_key)
+    {
+        if (!g_fn.map_get_str || !a_obj) {
+            return {};
+        }
+
+        const RE::BSFixedString value = g_fn.map_get_str(g_domain, a_obj.id, a_key.Get(), EmptyDefault());
+        const char* const        chars = value.c_str();
+        return chars ? std::string(chars) : std::string();
+    }
+
+    std::int32_t MapGetInt(ObjId a_obj, const Key& a_key, std::int32_t a_default)
+    {
+        if (!g_fn.map_get_int || !a_obj) {
+            return a_default;
+        }
+        return g_fn.map_get_int(g_domain, a_obj.id, a_key.Get(), a_default);
+    }
+
+    float MapGetFlt(ObjId a_obj, const Key& a_key, float a_default)
+    {
+        if (!g_fn.map_get_flt || !a_obj) {
+            return a_default;
+        }
+        return g_fn.map_get_flt(g_domain, a_obj.id, a_key.Get(), a_default);
     }
 
     std::int32_t MapGetInt(ObjId a_obj, std::string_view a_key, std::int32_t a_default)

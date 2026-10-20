@@ -139,6 +139,18 @@ namespace stm::data
         const auto count = jc::ArrayCount(matches);
         _all.reserve(static_cast<std::size_t>(std::max(0, count)));
 
+        // Interned once. Each Key is a BSFixedString, and building one per field
+        // per entry costs an interner lock plus a hash lookup - roughly 70 000
+        // of them on a 10 000-tattoo install, on the game thread, three times a
+        // session (load, post-load, first open).
+        static const jc::Key kName("name");
+        static const jc::Key kSection("section");
+        static const jc::Key kArea("area");
+        static const jc::Key kTexture("texture");
+        static const jc::Key kColor("color");
+        static const jc::Key kInvertedAlpha("invertedAlpha");
+        static const jc::Key kGlow("glow");
+
         for (std::int32_t i = 0; i < count; ++i) {
             const auto handle = jc::ArrayGetObj(matches, i);
             if (!handle) {
@@ -146,13 +158,13 @@ namespace stm::data
             }
 
             TattooEntry entry;
-            entry.name = jc::MapGetStr(handle, "name");
-            entry.section = jc::MapGetStr(handle, "section");
-            entry.area = NormalizeArea(jc::MapGetStr(handle, "area"));
-            entry.texture = jc::MapGetStr(handle, "texture");
-            entry.defaultColor = static_cast<std::uint32_t>(jc::MapGetInt(handle, "color", 0));
-            entry.defaultAlpha = 1.0f - jc::MapGetFlt(handle, "invertedAlpha", 0.0f);
-            entry.defaultGlow = static_cast<std::uint32_t>(jc::MapGetInt(handle, "glow", 0));
+            entry.name = jc::MapGetStr(handle, kName);
+            entry.section = jc::MapGetStr(handle, kSection);
+            entry.area = NormalizeArea(jc::MapGetStr(handle, kArea));
+            entry.texture = jc::MapGetStr(handle, kTexture);
+            entry.defaultColor = static_cast<std::uint32_t>(jc::MapGetInt(handle, kColor, 0));
+            entry.defaultAlpha = 1.0f - jc::MapGetFlt(handle, kInvertedAlpha, 0.0f);
+            entry.defaultGlow = static_cast<std::uint32_t>(jc::MapGetInt(handle, kGlow, 0));
 
             if (entry.name.empty() || !IsKnownArea(entry.area)) {
                 continue;
@@ -310,15 +322,13 @@ namespace stm::data
             counts[entry->section]++;
         }
 
-        const auto keywordEntry = [&keyword](const std::string& a_section) {
-            if (keyword.empty()) {
-                return true;
-            }
-            std::string lower(a_section);
-            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            std::string wanted(keyword);
-            std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            return lower.find(wanted) != std::string::npos;
+        // Lowercased once, not once per section: this used to rebuild the same
+        // `std::string wanted(keyword)` inside the loop below.
+        std::string wanted(keyword);
+        std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        const auto keywordEntry = [&wanted](const std::string& a_section) {
+            return ContainsNoCase(a_section, wanted);
         };
 
         _qSections.reserve(counts.size());

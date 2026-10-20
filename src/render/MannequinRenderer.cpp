@@ -5,6 +5,7 @@
 #include <SKSE/SKSE.h>
 #include <d3dcompiler.h>
 #include <cmath>
+#include <cstring>
 #include <numbers>
 
 #include <atomic>
@@ -49,6 +50,10 @@ namespace stm::render
         int                     g_meshRequest = -1;   // -1 = nothing queued
         bool                    g_meshStop = false;
         MeshLoadResult          g_meshResult;         // consumed by the render thread
+
+        // Mirrors g_meshResult.ready for the render thread, so a still frame can
+        // skip taking g_meshMutex at all.
+        std::atomic_bool        g_meshReady{ false };
 
         // Carried alongside g_meshRequest. A body-only request parses the body
         // NIF alone: a preset switch does not need the head, hands and feet
@@ -164,6 +169,7 @@ namespace stm::render
                         }
                         if (g_meshRequest < 0) {
                             g_meshResult = std::move(local);
+                            g_meshReady.store(true, std::memory_order_release);
                             break;
                         }
                         // A different sex, or a full rebuild asked for while we
@@ -186,6 +192,7 @@ namespace stm::render
             g_meshStop = false;
             g_meshRequest = -1;
             g_meshResult = {};
+            g_meshReady.store(false, std::memory_order_release);
             g_meshBodyOnly = false;
             g_meshMorph = nullptr;
             g_meshLabel.clear();
@@ -226,6 +233,7 @@ namespace stm::render
                 g_meshStop = true;
                 g_meshRequest = -1;
                 g_meshResult = {};
+                g_meshReady.store(false, std::memory_order_release);
                 g_meshMorph = nullptr;
                 g_meshLabel.clear();
                 worker = std::move(g_meshWorker);
@@ -684,6 +692,46 @@ namespace stm::render
         }
     }
 
+    namespace
+    {
+        // Identifies everything that changes the offscreen image except the
+        // camera, which has its own dirty flag. Used to skip the whole render
+        // when a frame would produce exactly the same picture as the last one.
+        std::uint64_t HashFrameParams(ID3D11ShaderResourceView* a_texture, const float a_color[3], float a_alpha,
+            MannequinColor a_bodyColor, float a_shadeStrength, const float a_glow[3], std::size_t a_part,
+            std::uint32_t a_width, std::uint32_t a_height)
+        {
+            std::uint64_t hash = 1469598103934665603ull;  // FNV-1a
+            const auto    mix = [&hash](std::uint64_t a_value) {
+                hash ^= a_value;
+                hash *= 1099511628211ull;
+            };
+            const auto mixFloat = [&mix](float a_value) {
+                std::uint32_t bits = 0;
+                std::memcpy(&bits, &a_value, sizeof(bits));
+                mix(bits);
+            };
+
+            mix(reinterpret_cast<std::uintptr_t>(a_texture));
+            mixFloat(a_color[0]);
+            mixFloat(a_color[1]);
+            mixFloat(a_color[2]);
+            mixFloat(a_alpha);
+            mix(static_cast<std::uint64_t>(a_bodyColor));
+            mixFloat(a_shadeStrength);
+            mix(a_glow ? 1u : 0u);
+            if (a_glow) {
+                mixFloat(a_glow[0]);
+                mixFloat(a_glow[1]);
+                mixFloat(a_glow[2]);
+            }
+            mix(a_part);
+            mix(a_width);
+            mix(a_height);
+            return hash;
+        }
+    }
+
     MannequinRenderer& MannequinRenderer::Get()
     {
         static MannequinRenderer s_instance;
@@ -744,6 +792,8 @@ namespace stm::render
 
         _initialized = true;
         _initFailed = false;
+        _dirty = true;
+        _lastParamsHash = 0;
         SKSE::log::info("[RENDER] MannequinRenderer initialized successfully ({}x{})", _width, _height);
         return true;
     }
@@ -788,12 +838,68 @@ namespace stm::render
         if (_renderTargetView) { _renderTargetView->Release(); _renderTargetView = nullptr; }
         if (_renderTargetTexture) { _renderTargetTexture->Release(); _renderTargetTexture = nullptr; }
 
+        // Nothing can be drawing from the parked targets any more.
+        DrainRetiredTargets(/*a_all=*/true);
+
         if (_context) { _context->Release(); _context = nullptr; }
         if (_device) { _device->Release(); _device = nullptr; }
 
         _initialized = false;
         _lastFailedWidth = 0;
         _lastFailedHeight = 0;
+        _dirty = true;
+        _lastParamsHash = 0;
+    }
+
+    // Moves the current offscreen targets into the retired list. They are
+    // released by a later frame - see RetiredTargets in the header.
+    void MannequinRenderer::RetireTargets()
+    {
+        if (!_shaderResourceView && !_renderTargetView && !_renderTargetTexture &&
+            !_depthStencilView && !_depthStencilTexture) {
+            return;
+        }
+
+        RetiredTargets retired;
+        retired.frame = _frame;
+        retired.srv = _shaderResourceView;
+        retired.rtv = _renderTargetView;
+        retired.color = _renderTargetTexture;
+        retired.dsv = _depthStencilView;
+        retired.depth = _depthStencilTexture;
+
+        _shaderResourceView = nullptr;
+        _renderTargetView = nullptr;
+        _renderTargetTexture = nullptr;
+        _depthStencilView = nullptr;
+        _depthStencilTexture = nullptr;
+
+        _retired.push_back(retired);
+    }
+
+    void MannequinRenderer::DrainRetiredTargets(bool a_all)
+    {
+        // A target retired in render call N may still be in that frame's draw
+        // list, so it is only released once a later call has started. The extra
+        // call of margin covers the frames where both the inspector and the
+        // enlarged preview render (two calls, one UI frame). `a_all` is the
+        // shutdown path, where no draw list survives.
+        const auto stale = [this, a_all](const RetiredTargets& a_entry) {
+            return a_all || (a_entry.frame + 1) < _frame;
+        };
+
+        for (auto it = _retired.begin(); it != _retired.end();) {
+            if (!stale(*it)) {
+                ++it;
+                continue;
+            }
+            if (it->srv) { it->srv->Release(); }
+            if (it->rtv) { it->rtv->Release(); }
+            if (it->color) { it->color->Release(); }
+            if (it->dsv) { it->dsv->Release(); }
+            if (it->depth) { it->depth->Release(); }
+            it = _retired.erase(it);
+        }
     }
 
     bool MannequinRenderer::InitShaders()
@@ -1038,19 +1144,27 @@ namespace stm::render
         _partMeshes[a_index].indexCount = static_cast<std::uint32_t>(indices.size());
         _partMeshes[a_index].meshSourceInfo = std::move(sourceInfo);
         _meshSex[a_index] = _currentSex;
+        _dirty = true;
         return true;
     }
 
     bool MannequinRenderer::ApplyPendingMeshes()
     {
+        // Cheap check first: a still frame must not pay for the mutex.
+        if (!g_meshReady.load(std::memory_order_acquire)) {
+            return false;
+        }
+
         MeshLoadResult result;
         {
             std::scoped_lock lock(g_meshMutex);
             if (!g_meshResult.ready) {
+                g_meshReady.store(false, std::memory_order_release);
                 return false;
             }
             result = std::move(g_meshResult);
             g_meshResult = {};
+            g_meshReady.store(false, std::memory_order_release);
         }
 
         // The user may have switched sex again while this batch was being
@@ -1120,6 +1234,9 @@ namespace stm::render
             _fullLoadSettled = true;
         }
 
+        if (replaced) {
+            _dirty = true;
+        }
         return replaced;
     }
 
@@ -1149,6 +1266,7 @@ namespace stm::render
         // A manual override counts as current for the active sex: otherwise a
         // later batch with no NIF for this part would replace it with procedural.
         _meshSex[idx] = _currentSex;
+        _dirty = true;
 
         return true;
     }
@@ -1255,12 +1373,10 @@ namespace stm::render
             return false;
         }
 
-        if (_shaderResourceView) { _shaderResourceView->Release(); _shaderResourceView = nullptr; }
-        if (_renderTargetView) { _renderTargetView->Release(); _renderTargetView = nullptr; }
-        if (_renderTargetTexture) { _renderTargetTexture->Release(); _renderTargetTexture = nullptr; }
-
-        if (_depthStencilView) { _depthStencilView->Release(); _depthStencilView = nullptr; }
-        if (_depthStencilTexture) { _depthStencilTexture->Release(); _depthStencilTexture = nullptr; }
+        // Parked, not released: this may run after the caller has already handed
+        // the current view to ImGui this frame (the enlarged preview opening does
+        // exactly that). See RetiredTargets in the header.
+        RetireTargets();
 
         // 创建颜色缓冲
         D3D11_TEXTURE2D_DESC td{};
@@ -1320,6 +1436,8 @@ namespace stm::render
         _lastFailedHeight = 0;
         _width = a_width;
         _height = a_height;
+        _dirty = true;
+        _lastParamsHash = 0;
         return true;
     }
 
@@ -1332,6 +1450,7 @@ namespace stm::render
         // 限制俯仰角度防翻转
         constexpr float maxPitch = 1.35f;
         cam.pitch = std::clamp(cam.pitch, -maxPitch, maxPitch);
+        _dirty = true;
     }
 
     void MannequinRenderer::Zoom(float a_deltaDistance)
@@ -1339,6 +1458,7 @@ namespace stm::render
         auto& cam = GetCamera();
         cam.distance -= a_deltaDistance;
         cam.distance = std::clamp(cam.distance, 0.6f, 5.0f);
+        _dirty = true;
     }
 
     void MannequinRenderer::Pan(float a_deltaY)
@@ -1346,6 +1466,7 @@ namespace stm::render
         auto& cam = GetCamera();
         cam.targetY += a_deltaY;
         cam.targetY = std::clamp(cam.targetY, -1.0f, 1.0f);
+        _dirty = true;
     }
 
     void MannequinRenderer::ResetCamera(PreviewPart a_part)
@@ -1375,6 +1496,7 @@ namespace stm::render
             _cameras[idx].pitch = 0.0f;
             break;
         }
+        _dirty = true;
     }
 
     void MannequinRenderer::ResetCamera()
@@ -1387,6 +1509,7 @@ namespace stm::render
         auto& cam = GetCamera();
         cam.yaw = 0.0f;
         cam.pitch = 0.0f;
+        _dirty = true;
     }
 
     void MannequinRenderer::SetBackView()
@@ -1394,12 +1517,16 @@ namespace stm::render
         auto& cam = GetCamera();
         cam.yaw = 3.14159265f;
         cam.pitch = 0.0f;
+        _dirty = true;
     }
 
     void MannequinRenderer::SetCurrentPart(PreviewPart a_part)
     {
         if (static_cast<std::uint32_t>(a_part) < static_cast<std::uint32_t>(PreviewPart::kCount)) {
-            _currentPart = a_part;
+            if (_currentPart != a_part) {
+                _currentPart = a_part;
+                _dirty = true;
+            }
         }
     }
 
@@ -1436,6 +1563,11 @@ namespace stm::render
         float a_shadeStrength,
         const float a_glowColor[3])
     {
+        // A new frame has started: targets parked during an earlier one can no
+        // longer be referenced by a draw list, so they can go now.
+        ++_frame;
+        DrainRetiredTargets(/*a_all=*/false);
+
         // Upload any mesh set the worker finished since the last frame. This is
         // the only place D3D buffers are created for background-loaded geometry,
         // and it runs before the buffers are read below, so a mesh that just
@@ -1464,12 +1596,24 @@ namespace stm::render
             return nullptr;
         }
 
+        // Checked before the early return below: a still frame still hands its
+        // view to ImGui, and a view from a removed device must not be drawn.
         if (_device->GetDeviceRemovedReason() != S_OK) {
             SKSE::log::warn("[RENDER] Direct3D device was removed/reset (0x{:X}), shutting down renderer",
                 static_cast<std::uint32_t>(_device->GetDeviceRemovedReason()));
             Shutdown();
             _initFailed = true;
             return nullptr;
+        }
+
+        // Nothing changed since the last frame - same mesh, camera, texture and
+        // tint - so hand back the image already in the target. This skips ~20
+        // COM get/release round trips, a constant-buffer upload and two full
+        // draws per frame for a preview that is just sitting on screen.
+        const std::uint64_t paramsHash = HashFrameParams(a_tattooTexture, a_tattooColor, a_tattooAlpha,
+            a_bodyColor, a_shadeStrength, a_glowColor, partIdx, _width, _height);
+        if (!_dirty && _shaderResourceView && paramsHash == _lastParamsHash) {
+            return _shaderResourceView;
         }
 
         // 备份原有渲染状态与管线绑定，确保对游戏与后续渲染零污染
@@ -1726,6 +1870,9 @@ namespace stm::render
         if (prevIB) prevIB->Release();
         if (prevVSConstant) prevVSConstant->Release();
         if (prevPSConstant) prevPSConstant->Release();
+
+        _dirty = false;
+        _lastParamsHash = paramsHash;
 
         return _shaderResourceView;
     }

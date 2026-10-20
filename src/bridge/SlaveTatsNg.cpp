@@ -16,14 +16,11 @@ namespace stm::ng
         // Conservative fallbacks; overwritten from skee64.ini when readable.
         struct SlotLimits
         {
-            int  body = 12;
-            int  face = 6;
-            int  hands = 6;
-            int  feet = 6;
-            bool loaded = false;
+            int body = 12;
+            int face = 6;
+            int hands = 6;
+            int feet = 6;
         };
-
-        SlotLimits g_slots;
 
         // Upstream's upgrade_tattoos() compares .SlaveTats.version against a
         // string literal compiled into SlaveTatsNG itself. We cannot read that
@@ -47,11 +44,9 @@ namespace stm::ng
             return RE::BSFixedString(a_str.c_str());
         }
 
-        void LoadSlotLimits()
+        SlotLimits ParseSlotLimits()
         {
-            if (g_slots.loaded) {
-                return;
-            }
+            SlotLimits limits;
 
             CSimpleIniA ini;
             ini.SetUnicode();
@@ -78,18 +73,27 @@ namespace stm::ng
                     return (end == val || parsed <= 0) ? fallback : static_cast<int>(parsed);
                 };
 
-                g_slots.body = parseSlot("Overlays/Body", g_slots.body);
-                g_slots.face = parseSlot("Overlays/Face", g_slots.face);
-                g_slots.hands = parseSlot("Overlays/Hands", g_slots.hands);
-                g_slots.feet = parseSlot("Overlays/Feet", g_slots.feet);
-                g_slots.loaded = true;
+                limits.body = parseSlot("Overlays/Body", limits.body);
+                limits.face = parseSlot("Overlays/Face", limits.face);
+                limits.hands = parseSlot("Overlays/Hands", limits.hands);
+                limits.feet = parseSlot("Overlays/Feet", limits.feet);
 
-                SKSE::log::info("SlaveTatsNG: slot limits from {} -> Body={} Face={} Hands={} Feet={}", path, g_slots.body, g_slots.face, g_slots.hands, g_slots.feet);
-                return;
+                SKSE::log::info("SlaveTatsNG: slot limits from {} -> Body={} Face={} Hands={} Feet={}", path, limits.body, limits.face, limits.hands, limits.feet);
+                return limits;
             }
 
             SKSE::log::warn("SlaveTatsNG: skee64.ini not readable, using default slot limits");
-            g_slots.loaded = true;
+            return limits;
+        }
+
+        // Parsed once, on first use. A function-local static provides the
+        // synchronisation the old hand-rolled `loaded` flag did not: MaxSlots()
+        // is called from the render thread, the task queue and the probe thread,
+        // and the flag was a plain bool.
+        const SlotLimits& Slots()
+        {
+            static const SlotLimits s_limits = ParseSlotLimits();
+            return s_limits;
         }
 
         const slavetats::Addresses* Iface()
@@ -318,19 +322,19 @@ namespace stm::ng
 
     int MaxSlots(std::string_view a_area)
     {
-        LoadSlotLimits();
+        const auto& limits = Slots();
 
         if (a_area == "Body") {
-            return g_slots.body;
+            return limits.body;
         }
         if (a_area == "Face") {
-            return g_slots.face;
+            return limits.face;
         }
         if (a_area == "Hands") {
-            return g_slots.hands;
+            return limits.hands;
         }
         if (a_area == "Feet") {
-            return g_slots.feet;
+            return limits.feet;
         }
         return 0;
     }

@@ -154,6 +154,40 @@ namespace stm::render
         // on their procedural stand-ins, so SetBodyMorph asks for a full one.
         bool _fullLoadSettled = false;
 
+        // ---- deferred release of the offscreen targets ----------------------
+        //
+        // ImGui keeps the raw ID3D11ShaderResourceView* it was handed in the
+        // window's draw list until the frame is rendered, which happens after
+        // every callback has returned. A Resize() that runs later in the same
+        // frame (the enlarged preview opening on the click that requested it
+        // does exactly that) therefore cannot Release() the view it is
+        // replacing: the draw list would bind freed memory.
+        //
+        // Targets are parked here with the frame number they were retired in and
+        // released at the start of a later frame, when no draw list can still
+        // refer to them.
+        struct RetiredTargets
+        {
+            std::uint64_t             frame = 0;
+            ID3D11ShaderResourceView* srv = nullptr;
+            ID3D11RenderTargetView*   rtv = nullptr;
+            ID3D11Texture2D*          color = nullptr;
+            ID3D11DepthStencilView*   dsv = nullptr;
+            ID3D11Texture2D*          depth = nullptr;
+        };
+
+        void RetireTargets();
+        void DrainRetiredTargets(bool a_all);
+
+        std::vector<RetiredTargets> _retired;
+        std::uint64_t               _frame = 0;
+
+        // True when the offscreen image no longer matches what the next frame
+        // would draw. Set by everything that changes the picture, cleared by a
+        // successful render. A still preview then costs nothing per frame.
+        bool          _dirty = true;
+        std::uint64_t _lastParamsHash = 0;
+
         bool InitShaders();
         bool InitMesh();
         bool InitBuffers();

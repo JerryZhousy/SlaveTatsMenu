@@ -15,6 +15,12 @@ namespace stm::render
     {
         constexpr std::size_t kMaxCacheEntries = 32;
 
+        // A DDS header is read from a third-party archive, so the size it
+        // reports is untrusted input: a corrupt entry claiming 0xFFFFFFFF used to
+        // attempt a 4 GB allocation on the render thread. The NIF parser has the
+        // same guard for the same reason.
+        constexpr std::uint32_t kMaxDdsBytes = 64u * 1024u * 1024u;
+
         struct CacheEntry
         {
             std::string pathKey;
@@ -49,6 +55,11 @@ namespace stm::render
 
             if (totalSize < 128) {
                 SKSE::log::warn("TextureLoader: file '{}' size too small ({} bytes) for DDS", a_path, totalSize);
+                return nullptr;
+            }
+            if (totalSize > kMaxDdsBytes) {
+                SKSE::log::warn("TextureLoader: file '{}' claims {} bytes, refusing to load (limit {})",
+                    a_path, totalSize, kMaxDdsBytes);
                 return nullptr;
             }
 
@@ -169,19 +180,31 @@ namespace stm::render
             return nullptr;
         }
 
-        std::lock_guard<std::mutex> lock(s_cacheMutex);
-
-        auto it = s_cacheMap.find(vfsPath);
-        if (it != s_cacheMap.end()) {
-            // Move touched entry to front of LRU list
-            s_lruList.splice(s_lruList.begin(), s_lruList, it->second);
-            return it->second->srv;
+        {
+            std::lock_guard<std::mutex> lock(s_cacheMutex);
+            auto it = s_cacheMap.find(vfsPath);
+            if (it != s_cacheMap.end()) {
+                // Move touched entry to front of LRU list
+                s_lruList.splice(s_lruList.begin(), s_lruList, it->second);
+                return it->second->srv;
+            }
         }
 
-        // Not in cache, load from VFS
+        // Not in cache, load from VFS. Deliberately outside the lock: this is a
+        // file read plus a full DDS decode, and holding the mutex across it made
+        // every other cache user wait for it.
         ID3D11ShaderResourceView* srv = LoadDdsFromVfsDirect(vfsPath);
         if (!srv) {
             return nullptr;
+        }
+
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+
+        // Somebody else may have inserted the same path while we were decoding.
+        if (auto it = s_cacheMap.find(vfsPath); it != s_cacheMap.end()) {
+            srv->Release();
+            s_lruList.splice(s_lruList.begin(), s_lruList, it->second);
+            return it->second->srv;
         }
 
         // Evict LRU entry if cache reached limit

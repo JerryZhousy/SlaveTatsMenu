@@ -25,6 +25,27 @@ namespace stm::jc
 
     bool Ready();
 
+    // An interned ledger key.
+    //
+    // The reflected entry points take BSFixedString, and constructing one goes
+    // through a global interner lock plus a hash lookup. That is fine for a
+    // single read, and ruinous for a walk over every tattoo in the catalogue:
+    // BuildFromApi used to build seven of them per entry. Hold a Key in a
+    // function-local static instead and the cost is paid once per process.
+    //
+    // The constructor is explicit so a bare string literal still binds to the
+    // string_view overloads below - no ambiguity, no silent change of meaning.
+    class Key
+    {
+    public:
+        explicit Key(const char* a_literal);
+
+        const RE::BSFixedString& Get() const { return *_value; }
+
+    private:
+        const RE::BSFixedString* _value;
+    };
+
     // --- lifetime ---------------------------------------------------------
     ObjId CreateMap();
     ObjId CreateArray();
@@ -38,6 +59,11 @@ namespace stm::jc
     std::string  MapGetStr(ObjId a_obj, std::string_view a_key, std::string_view a_default = "");
     std::int32_t MapGetInt(ObjId a_obj, std::string_view a_key, std::int32_t a_default = 0);
     float        MapGetFlt(ObjId a_obj, std::string_view a_key, float a_default = 0.0f);
+
+    // Same reads with a pre-interned key. Use these in loops.
+    std::string  MapGetStr(ObjId a_obj, const Key& a_key);
+    std::int32_t MapGetInt(ObjId a_obj, const Key& a_key, std::int32_t a_default = 0);
+    float        MapGetFlt(ObjId a_obj, const Key& a_key, float a_default = 0.0f);
     ObjId        MapGetObj(ObjId a_obj, std::string_view a_key);
     bool         MapHasKey(ObjId a_obj, std::string_view a_key);
     void         MapSetStr(ObjId a_obj, std::string_view a_key, std::string_view a_value);

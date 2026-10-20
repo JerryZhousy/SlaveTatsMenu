@@ -289,12 +289,17 @@ namespace
                     shape->source = kStmOBodySourcePreset;
 
                     // Only answer "does this preset exist" when the database is
-                    // already in memory. On the first resolve of the session it
-                    // is not, and loading it here would stall the game thread for
-                    // the whole scan; ApplyImpl does the lookup on the worker
-                    // instead and reports the truth from there.
+                    // already in memory and nobody is rescanning it. On the first
+                    // resolve of the session it is not, and loading it here would
+                    // stall the game thread for the whole scan; ApplyImpl does the
+                    // lookup on the worker instead and reports the truth from there.
+                    //
+                    // TryFindPreset, not FindPreset: a re-scan holds the database
+                    // mutex for tens of megabytes of XML, and this is the game
+                    // thread. A miss here is "not known yet", never "does not
+                    // exist" - the worker re-resolves it either way.
                     if (stm::obody::PresetsLoaded()) {
-                        if (const auto preset = stm::obody::FindPreset(shape->presetName)) {
+                        if (const auto preset = stm::obody::TryFindPreset(shape->presetName)) {
                             if (preset->sexKnown && preset->female != (a_sex != 1)) {
                                 // A female preset on a male body (or the reverse)
                                 // deforms the wrong vertices: the slider names are
@@ -313,9 +318,13 @@ namespace
                                 detail = "OBody preset, " + std::to_string(preset->sliders.size()) + " sliders";
                                 if (std::exchange(g_loggedPresetCount, true) == false) {
                                     SKSE::log::info("[OBODY] preset database: {} presets from {}",
-                                        stm::obody::PresetCount(), stm::obody::PresetDirectory());
+                                        stm::obody::TryPresetCount(), stm::obody::PresetDirectory());
                                 }
                             }
+                        } else if (!stm::obody::PresetsLoaded()) {
+                            // A re-scan started between the two checks. Keep the
+                            // preset source so ApplyImpl resolves it on the worker.
+                            detail = "OBody preset '" + shape->label + "' (preset database busy)";
                         } else {
                             detail = "preset '" + shape->label + "' not found in SliderPresets";
                             shape->source = kStmOBodySourceNone;

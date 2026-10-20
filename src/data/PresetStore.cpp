@@ -1,6 +1,7 @@
 #include "data/PresetStore.h"
 
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "core/Text.h"
 
 #include <fstream>
@@ -111,7 +112,7 @@ namespace stm::data
     std::filesystem::path PresetStore::Directory() const
     {
         static const std::filesystem::path s_dir =
-            std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SlaveTatsMenu" / "Presets";
+            paths::GameRoot() / "Data" / "SKSE" / "Plugins" / "SlaveTatsMenu" / "Presets";
         return s_dir;
     }
 

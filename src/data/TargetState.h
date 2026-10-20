@@ -30,6 +30,11 @@ namespace stm::data
     private:
         TargetState() = default;
 
-        RE::ActorHandle _handle;
+        // Written from the render thread (the target row's buttons) and read from
+        // the task queue (ops::pending samples the current target). RE::ActorHandle
+        // is not trivially copyable, so sharing it without a lock is a genuine
+        // data race, not a theoretical one.
+        mutable std::mutex _mutex;
+        RE::ActorHandle    _handle;
     };
 }
