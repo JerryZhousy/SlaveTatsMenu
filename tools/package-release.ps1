@@ -140,10 +140,24 @@ foreach ($file in $licenceFiles) {
 }
 
 # The notices must be at least as new as the code they describe.
-$stale = @(Get-ChildItem (Join-Path $root 'src'), (Join-Path $root 'include') -Recurse -File |
-    Where-Object { $_.LastWriteTime -gt (Get-Item $dll).LastWriteTime })
+#
+# The tree builds two DLLs, so each source has to be compared against the binary
+# it actually feeds. Testing everything against the main plugin reported the
+# add-on's own sources as stale every time one of them was touched: the add-on
+# links after the main DLL, which leaves its sources newer than SlaveTatsMenu.dll
+# even though they were compiled.
+$obodyDll = Join-Path $root 'SKSE\Plugins\SlaveTatsMenuOBody.dll'
+$stale = @()
+foreach ($file in Get-ChildItem (Join-Path $root 'src'), (Join-Path $root 'include') -Recurse -File) {
+    $relative = $file.FullName.Substring($root.Length + 1)
+    $owner = if ($relative -like 'src\obody\*' -or $relative -eq 'include\StmOBodyApi.h') { $obodyDll } else { $dll }
+    if (-not (Test-Path $owner)) { continue }   # that half was not built in this configuration
+    if ($file.LastWriteTime -gt (Get-Item $owner).LastWriteTime) {
+        $stale += "$relative (newer than $(Split-Path $owner -Leaf))"
+    }
+}
 if ($stale.Count -gt 0) {
-    Write-Warning "$($stale.Count) source file(s) are newer than the DLL - rebuild before shipping."
+    Write-Warning "$($stale.Count) source file(s) are newer than their DLL - rebuild before shipping:`n  $($stale -join "`n  ")"
 }
 
 # --- version and FOMOD sources ----------------------------------------------------------------
