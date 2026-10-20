@@ -36,6 +36,8 @@ namespace stm::render
             ExtractedMesh parts[kPartCount];
             int           sex = 0;
             bool          ready = false;
+            bool          bodyOnly = false;
+            std::string   bodyLabel;  // "| OBody: <preset>", empty when not deformed
         };
 
         // One worker for the whole process, created on first use and joined in
@@ -48,10 +50,67 @@ namespace stm::render
         bool                    g_meshStop = false;
         MeshLoadResult          g_meshResult;         // consumed by the render thread
 
+        // Carried alongside g_meshRequest. A body-only request parses the body
+        // NIF alone: a preset switch does not need the head, hands and feet
+        // re-read, and those parses are the bulk of the cost.
+        bool                    g_meshBodyOnly = false;
+        MannequinRenderer::BodyMorphFn g_meshMorph;
+        std::string             g_meshLabel;
+
+        // Deforms parts[0] from its undeformed copy and refreshes the normals.
+        // Keeping the pristine vertices lets a second morph reuse the parse
+        // instead of re-reading the NIF: the parse is the expensive half, and a
+        // preset switch only changes the offsets applied to it.
+        bool DeformBody(MeshLoadResult& a_local, const std::vector<MannequinVertex>& a_pristine,
+                        const MannequinRenderer::BodyMorphFn& a_morph, const std::string& a_label)
+        {
+            a_local.bodyLabel.clear();
+
+            auto& body = a_local.parts[0];
+            if (!body.success || a_pristine.empty()) {
+                return false;
+            }
+
+            // Always start from the undeformed vertices: a second morph on the
+            // same parse would otherwise compound the first one, and clearing the
+            // morph has to put the neutral body back.
+            body.vertices = a_pristine;
+
+            if (!a_morph) {
+                return false;
+            }
+
+            const std::size_t count = body.vertices.size();
+            std::vector<float> positions(count * 3);
+            for (std::size_t i = 0; i < count; ++i) {
+                positions[i * 3 + 0] = body.vertices[i].pos.x;
+                positions[i * 3 + 1] = body.vertices[i].pos.y;
+                positions[i * 3 + 2] = body.vertices[i].pos.z;
+            }
+
+            std::string info;
+            if (!a_morph(positions.data(), static_cast<std::uint32_t>(count), body.sourcePath, body.shapeName,
+                    body.normalizeScale, info)) {
+                SKSE::log::warn("[RENDER] body deformation skipped: {}", info);
+                return false;
+            }
+
+            for (std::size_t i = 0; i < count; ++i) {
+                body.vertices[i].pos = { positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2] };
+            }
+            NifMeshExtractor::ComputeSmoothNormals(body.vertices, body.indices);
+            a_local.bodyLabel = a_label;
+            SKSE::log::info("[RENDER] body deformed by '{}': {}", a_label, info);
+            return true;
+        }
+
         void MeshWorkerMain()
         {
             for (;;) {
                 int sex = 0;
+                bool bodyOnly = false;
+                MannequinRenderer::BodyMorphFn morph;
+                std::string label;
                 {
                     std::unique_lock lock(g_meshMutex);
                     g_meshCv.wait(lock, [] { return g_meshStop || g_meshRequest >= 0; });
@@ -60,25 +119,63 @@ namespace stm::render
                     }
                     sex = g_meshRequest;
                     g_meshRequest = -1;
+                    bodyOnly = g_meshBodyOnly;
+                    morph = g_meshMorph;
+                    label = g_meshLabel;
                 }
 
                 const auto bodySex = (sex == 1) ? BodySex::kMale : BodySex::kFemale;
 
                 MeshLoadResult local;
                 local.sex = sex;
-                for (std::size_t i = 0; i < kPartCount; ++i) {
+                local.bodyOnly = bodyOnly;
+
+                const std::size_t partBegin = 0;
+                const std::size_t partEnd = bodyOnly ? 1 : kPartCount;
+                for (std::size_t i = partBegin; i < partEnd; ++i) {
                     local.parts[i] = NifMeshExtractor::LoadDefaultPartNif(static_cast<PreviewPart>(i), bodySex);
                 }
+
+                // The deformation runs here, on the worker, on the vertices the
+                // NIF parser just produced: the render thread only ever sees
+                // finished geometry.
+                std::vector<MannequinVertex> pristineBody;
+                if (local.parts[0].success) {
+                    pristineBody = local.parts[0].vertices;
+                }
+                DeformBody(local, pristineBody, morph, label);
+
                 local.ready = true;
 
-                {
-                    std::scoped_lock lock(g_meshMutex);
-                    // A newer request arrived while we were parsing (the user
-                    // toggled sex again): drop this result rather than publish a
-                    // body for the wrong sex. The loop picks the newer one up.
-                    if (g_meshRequest < 0) {
-                        g_meshResult = std::move(local);
+                // Publishing is where the queue is coalesced. A request that
+                // arrived while we were parsing used to throw this whole parse
+                // away - and since opening the menu queues a full load and the
+                // resolve lands a frame later with the same sex, that meant every
+                // open parsed everything twice. A same-sex request that needs no
+                // more parts than we already have is satisfied by re-applying its
+                // morph to this geometry; anything else still has to re-parse.
+                for (;;) {
+                    MannequinRenderer::BodyMorphFn pendingMorph;
+                    std::string                     pendingLabel;
+                    {
+                        std::scoped_lock lock(g_meshMutex);
+                        if (g_meshStop) {
+                            return;
+                        }
+                        if (g_meshRequest < 0) {
+                            g_meshResult = std::move(local);
+                            break;
+                        }
+                        // A different sex, or a full rebuild asked for while we
+                        // only parsed the body: this result cannot answer it.
+                        if (g_meshRequest != sex || (!g_meshBodyOnly && bodyOnly)) {
+                            break;
+                        }
+                        pendingMorph = g_meshMorph;
+                        pendingLabel = g_meshLabel;
+                        g_meshRequest = -1;
                     }
+                    DeformBody(local, pristineBody, pendingMorph, pendingLabel);
                 }
             }
         }
@@ -89,20 +186,34 @@ namespace stm::render
             g_meshStop = false;
             g_meshRequest = -1;
             g_meshResult = {};
+            g_meshBodyOnly = false;
+            g_meshMorph = nullptr;
+            g_meshLabel.clear();
 
             if (!g_meshWorker.joinable()) {
                 g_meshWorker = std::thread(MeshWorkerMain);
             }
         }
 
-        void RequestMeshLoad(int a_sex)
+        void RequestMeshLoad(int a_sex, bool a_bodyOnly, const MannequinRenderer::BodyMorphFn& a_morph,
+            const std::string& a_label)
         {
             {
                 std::scoped_lock lock(g_meshMutex);
                 if (g_meshStop) {
                     return;
                 }
+                // Merge with a request that has not been picked up yet instead of
+                // replacing it: a full load satisfies a body-only one, so asking
+                // for the body while the other three parts are still queued must
+                // not turn the queued full load into a body-only parse.
+                if (g_meshRequest == a_sex) {
+                    a_bodyOnly = a_bodyOnly && g_meshBodyOnly;
+                }
                 g_meshRequest = a_sex;
+                g_meshBodyOnly = a_bodyOnly;
+                g_meshMorph = a_morph;
+                g_meshLabel = a_label;
             }
             g_meshCv.notify_one();
         }
@@ -115,6 +226,8 @@ namespace stm::render
                 g_meshStop = true;
                 g_meshRequest = -1;
                 g_meshResult = {};
+                g_meshMorph = nullptr;
+                g_meshLabel.clear();
                 worker = std::move(g_meshWorker);
             }
             g_meshCv.notify_all();
@@ -641,6 +754,12 @@ namespace stm::render
         // this process after the DLL is unloaded.
         StopMeshWorker();
 
+        // Drops the last reference to the add-on's shape before static teardown
+        // runs, so its release() cannot outlive the module that owns it.
+        _bodyMorph = nullptr;
+        _bodyMorphLabel.clear();
+        _fullLoadSettled = false;
+
         // Release all cached tattoo textures while D3D device is still alive
         TextureLoader::ClearCache();
 
@@ -849,8 +968,31 @@ namespace stm::render
         }
 
         // The real geometry is parsed off-thread and uploaded by ApplyPendingMeshes.
-        RequestMeshLoad(_currentSex);
+        _fullLoadSettled = false;
+        RequestMeshLoad(_currentSex, /*a_bodyOnly=*/false, _bodyMorph, _bodyMorphLabel);
         return true;
+    }
+
+    void MannequinRenderer::SetBodyMorph(BodyMorphFn a_fn, std::string a_label)
+    {
+        _bodyMorph = std::move(a_fn);
+        _bodyMorphLabel = std::move(a_label);
+
+        // Body only - a preset switch must not re-read the head, hands and feet -
+        // but only once the parts on screen come from a completed full load. Right
+        // after the window opens that load is still in flight, and a body-only
+        // request would strand three procedural parts.
+        RequestMeshLoad(_currentSex, /*a_bodyOnly=*/_fullLoadSettled, _bodyMorph, _bodyMorphLabel);
+    }
+
+    void MannequinRenderer::ClearBodyMorph()
+    {
+        const bool had = static_cast<bool>(_bodyMorph);
+        _bodyMorph = nullptr;
+        _bodyMorphLabel.clear();
+        if (had) {
+            RequestMeshLoad(_currentSex, /*a_bodyOnly=*/_fullLoadSettled, _bodyMorph, _bodyMorphLabel);
+        }
     }
 
     bool MannequinRenderer::BuildProceduralMesh(std::size_t a_index)
@@ -922,6 +1064,11 @@ namespace stm::render
         bool        replaced = false;
 
         for (std::size_t i = 0; i < kPartCount; ++i) {
+            // A body-only rebuild deliberately leaves the other three parts
+            // alone; reporting them as "no usable NIF" every time would be a lie.
+            if (result.bodyOnly && i != 0) {
+                continue;
+            }
             auto& mesh = result.parts[i];
             if (!mesh.success || mesh.vertices.empty() || mesh.indices.empty()) {
                 // No usable NIF for this part. If what is on screen was built for
@@ -943,6 +1090,10 @@ namespace stm::render
                 sourceInfo = std::string(sexLabel) + " NIF (" + mesh.shapeName + ")";
             }
 
+            if (i == 0 && !result.bodyLabel.empty()) {
+                sourceInfo += " | OBody: " + result.bodyLabel;
+            }
+
             ID3D11Buffer* newVB = nullptr;
             ID3D11Buffer* newIB = nullptr;
             if (!CreateD3DBuffers(_device, vertices, indices, newVB, newIB)) {
@@ -960,6 +1111,13 @@ namespace stm::render
 
             SKSE::log::info("[RENDER] preview part {} <- {} ({} verts, {} tris)",
                 i, _partMeshes[i].meshSourceInfo, vertices.size(), indices.size() / 3);
+        }
+
+        // A full batch was accepted: whatever the parts ended up holding - real
+        // NIF or procedural fallback - is now the settled state for this sex, so
+        // later preset switches only need to rebuild the body.
+        if (!result.bodyOnly) {
+            _fullLoadSettled = true;
         }
 
         return replaced;

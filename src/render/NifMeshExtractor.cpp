@@ -388,7 +388,7 @@ namespace stm::render
             const std::uint8_t* partData = (skinPartBlock != -1) ? &buffer[blockOffsets[skinPartBlock]] : nullptr;
             std::size_t partSize = (skinPartBlock != -1) ? blockSizes[skinPartBlock] : 0;
 
-            if (ParseDynamicTriShape(dynData, dynSize, partData, partSize, bsVersion, result.vertices, result.indices)) {
+            if (ParseDynamicTriShape(dynData, dynSize, partData, partSize, bsVersion, result.vertices, result.indices, &result.normalizeScale)) {
                 fs::path p(a_filePath);
                 result.shapeName = p.stem().string() + " (BSDynamicTriShape)";
                 result.success = true;
@@ -413,11 +413,42 @@ namespace stm::render
 
         if (targetPartitionBlock != -1) {
             fs::path p(a_filePath);
-            result.shapeName = p.stem().string() + " (NiSkinPartition)";
+            // The partition block does not carry the shape's name; the owning
+            // BSTriShape does, and the OBody preview needs it to pick the right
+            // morph set out of the tri file.
+            std::string ownerName;
+            for (std::uint32_t i = 0; i < numBlocks; ++i) {
+                if (blockTypeIndices[i] >= blockTypes.size()) continue;
+                if (blockTypes[blockTypeIndices[i]] != "BSTriShape") continue;
+                if (blockSizes[i] < 96) continue;
+
+                const std::uint8_t* shapeData = &buffer[blockOffsets[i]];
+                // NiObjectNET: name, then the extra-data array. A shape that
+                // carries extra data (some bodies ship one) shifts every field
+                // after it, so the skin reference is not always at 88.
+                const std::uint32_t numExtra = *reinterpret_cast<const std::uint32_t*>(shapeData + 4);
+                const std::size_t   skinOffset = 88 + 4 * static_cast<std::size_t>(numExtra);
+                if (skinOffset + 4 > blockSizes[i]) continue;
+                const std::int32_t skinRef = *reinterpret_cast<const std::int32_t*>(shapeData + skinOffset);
+                if (skinRef < 0 || skinRef >= static_cast<std::int32_t>(numBlocks)) continue;
+                if (blockSizes[skinRef] < 8) continue;
+
+                const std::int32_t partitionRef =
+                    *reinterpret_cast<const std::int32_t*>(&buffer[blockOffsets[skinRef]] + 4);
+                if (partitionRef != targetPartitionBlock) continue;
+
+                const std::int32_t nameIdx = *reinterpret_cast<const std::int32_t*>(shapeData);
+                if (nameIdx >= 0 && nameIdx < static_cast<std::int32_t>(strings.size())) {
+                    ownerName = strings[nameIdx];
+                }
+                break;
+            }
+
+            result.shapeName = ownerName.empty() ? (p.stem().string() + " (NiSkinPartition)") : ownerName;
             const std::uint8_t* pData = &buffer[blockOffsets[targetPartitionBlock]];
             std::size_t pSize = blockSizes[targetPartitionBlock];
 
-            if (ParseNiSkinPartition(pData, pSize, bsVersion, result.vertices, result.indices)) {
+            if (ParseNiSkinPartition(pData, pSize, bsVersion, result.vertices, result.indices, &result.normalizeScale)) {
                 result.success = true;
                 return result;
             }
@@ -460,7 +491,7 @@ namespace stm::render
                             fs::path fp(a_filePath);
                             result.shapeName = fp.stem().string() + " (BSTriShape)";
                         }
-                        if (ParseDirectTriShape(&bData[p], bSize - p, numTri, numVert, vDesc, result.vertices, result.indices)) {
+                        if (ParseDirectTriShape(&bData[p], bSize - p, numTri, numVert, vDesc, result.vertices, result.indices, &result.normalizeScale)) {
                             result.success = true;
                             return result;
                         }
@@ -479,7 +510,8 @@ namespace stm::render
         std::size_t a_partitionSize,
         std::uint32_t a_bsVersion,
         std::vector<MannequinVertex>& a_outVerts,
-        std::vector<std::uint32_t>& a_outIndices)
+        std::vector<std::uint32_t>& a_outIndices,
+        float* a_outScale)
     {
         if (!a_shapeData || a_shapeSize < 124) return false;
 
@@ -549,6 +581,9 @@ namespace stm::render
             return false;
         }
         float scale = 1.9f / maxDim;
+        if (a_outScale) {
+            *a_outScale = scale;
+        }
 
         float centerX = (minX + maxX) * 0.5f;
         float centerY_nif = (minY + maxY) * 0.5f;
@@ -675,7 +710,8 @@ namespace stm::render
         std::size_t a_size,
         std::uint32_t a_bsVersion,
         std::vector<MannequinVertex>& a_outVerts,
-        std::vector<std::uint32_t>& a_outIndices)
+        std::vector<std::uint32_t>& a_outIndices,
+        float* a_outScale)
     {
         if (a_size < 20) return false;
 
@@ -738,7 +774,10 @@ namespace stm::render
         if (maxDim < 1.0f) {
             return false;
         }
-        float scale = 1.9f / maxDim; // 缩放到合适视口尺度
+        float scale = 1.9f / maxDim;
+        if (a_outScale) {
+            *a_outScale = scale;
+        } // 缩放到合适视口尺度
 
         // 判断 UV 偏移：Skyrim SE (vertexStride >= 28) 包含 bitangent/unusedW (4 字节)，UV 在 offset 16
         // 若较短 (vertexStride < 28) 则 UV 在 offset 12
@@ -889,7 +928,8 @@ namespace stm::render
         std::uint32_t a_numVertices,
         std::uint64_t /*a_vertexDesc*/,
         std::vector<MannequinVertex>& a_outVerts,
-        std::vector<std::uint32_t>& a_outIndices)
+        std::vector<std::uint32_t>& a_outIndices,
+        float* a_outScale)
     {
         if (a_numVertices == 0 || a_numTriangles == 0) return false;
 
@@ -939,6 +979,9 @@ namespace stm::render
         float maxDim = std::max({ dimX, dimY, dimZ });
         if (maxDim < 1.0f) return false;
         float scale = 1.9f / maxDim;
+        if (a_outScale) {
+            *a_outScale = scale;
+        }
 
         const std::size_t uvOffset = (stride >= 28) ? 16 : 12;
 

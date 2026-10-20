@@ -8,6 +8,7 @@
 #include "data/TattooDatabase.h"
 #include "diag/CallTrace.h"
 #include "diag/Probe.h"
+#include "obody/OBodyBridge.h"
 #include "render/MannequinRenderer.h"
 #include "ui/InputHandler.h"
 #include "ui/Ui.h"
@@ -52,6 +53,10 @@ namespace
             {
                 stm::jc::BindReflection();
                 stm::Config::Get().Load();
+
+                // Optional: the OBody add-on, when its DLL is installed. Does
+                // nothing (and says so once) otherwise.
+                stm::obody::Initialize();
 
                 // The bridge installs the tracer the moment it receives the
                 // interface; the INI decides whether it stays on.

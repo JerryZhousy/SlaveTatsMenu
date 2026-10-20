@@ -1,0 +1,30 @@
+SlaveTatsMenuOBody - OBody NG plugin API notice
+===============================================
+
+SlaveTatsMenuOBody.dll talks to OBody NG through the plugin API published in
+OBody's `include/API/API.h` (API version 1). `src/obody/OBodyPluginApi.h`
+declares the same interface layout so this add-on does not have to compile
+against OBody's sources.
+
+    OBody NG - https://github.com/Aietos/OBody-NG
+    Author  - Aietos and contributors
+    Licence - GNU General Public License v3.0
+
+Because the add-on implements that interface, SlaveTatsMenuOBody.dll is
+distributed under the GNU General Public License v3.0. The full text of that
+licence is in LICENSES/CommonLibSSE-NG.txt, which is the same GPL-3.0 text
+shipped for CommonLibSSE-NG (the library the DLL statically links).
+
+No source file from OBody NG is redistributed here. The interface declaration
+in src/obody/OBodyPluginApi.h contains only the method signatures and the
+message id needed to call `GetPresetAssignedToActor`; it is not a copy of
+OBody's header.
+
+SlaveTatsMenu.dll itself does not link against, include, or ship any part of
+OBody NG. It only loads the add-on at runtime, if the add-on is installed, and
+talks to it through include/StmOBodyApi.h, which is this project's own code.
+
+The add-on also reads RaceMenu's `BodyMorph` interface, published by skee64 for
+third-party plugins. skee64 is not redistributed here; the declaration lives in
+src/obody/AddonMain.cpp and is used only to read morph values the game has
+already applied to an actor.

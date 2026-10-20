@@ -2,6 +2,7 @@
 
 #include <d3d11.h>
 #include <DirectXMath.h>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -53,6 +54,13 @@ namespace stm::render
     {
     public:
         static MannequinRenderer& Get();
+
+        // Deforms the parsed body vertices in place. Supplied by the optional
+        // OBody add-on: (positions, vertexCount, nifPath, shapeName, scale, info).
+        // `scale` is the NIF->viewport factor the parser applied (the axes are
+        // also swapped Y/Z), so offsets authored in NIF units come out right.
+        // Runs on the loading worker, never on the render thread.
+        using BodyMorphFn = std::function<bool(float*, std::uint32_t, const std::string&, const std::string&, float, std::string&)>;
 
         bool Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
         void Shutdown();
@@ -115,6 +123,13 @@ namespace stm::render
         bool ReloadForPlayerSex();
         bool InitMeshWithSex(int a_sex);
 
+        // Installs (or clears) the body deformation and rebuilds the body mesh
+        // in the background. The rest of the body - the camera, the other three
+        // parts, the tattoo texture - is left alone.
+        void SetBodyMorph(BodyMorphFn a_fn, std::string a_label);
+        void ClearBodyMorph();
+        const std::string& GetBodyMorphLabel() const { return _bodyMorphLabel; }
+
     private:
         MannequinRenderer() = default;
 
@@ -128,6 +143,16 @@ namespace stm::render
 
         int _currentSex = 0;
         PreviewPart _currentPart = PreviewPart::kBody;
+
+        // Body-only deformation. Held by value so the loading worker can take
+        // its own copy and the render thread never blocks on the add-on.
+        BodyMorphFn  _bodyMorph;
+        std::string  _bodyMorphLabel;
+
+        // True once a full (all four parts) load for the current sex has been
+        // uploaded. Until then a body-only rebuild would leave the other parts
+        // on their procedural stand-ins, so SetBodyMorph asks for a full one.
+        bool _fullLoadSettled = false;
 
         bool InitShaders();
         bool InitMesh();

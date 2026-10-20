@@ -11,6 +11,7 @@
 #include "data/PresetStore.h"
 #include "data/TattooDatabase.h"
 #include "diag/Probe.h"
+#include "obody/OBodyBridge.h"
 #include "ops/PresetOps.h"
 #include "ops/TattooOps.h"
 #include "render/MannequinRenderer.h"
@@ -27,6 +28,58 @@ namespace stm::ui
         MENU_WINDOW g_window = nullptr;
 
         const char* kAreaIds[] = { "", "Body", "Face", "Hands", "Feet" };
+
+        // Defined further down; the OBody status message below is the first
+        // thing in this file that needs it.
+        double NowSeconds();
+
+        // Applies a freshly resolved OBody shape to the preview. The comparison
+        // lives here because only the UI knows what is currently on screen: a
+        // shape resolved for another target, or the same preset as last time,
+        // must not trigger another 200 ms body rebuild.
+        void ApplyResolvedOBodyShape()
+        {
+            auto shape = obody::TakeResolved();
+            if (!shape) {
+                return;
+            }
+
+            static std::uint32_t s_actor = 0;
+            static std::string   s_label;
+            static int           s_sex = -1;
+
+            if (!shape->handle) {
+                if (s_sex != -1) {
+                    s_actor = 0;
+                    s_label.clear();
+                    s_sex = -1;
+                    render::MannequinRenderer::Get().ClearBodyMorph();
+                    // The body just went back to zeroed. Say why, once: the
+                    // add-on's detail is the only explanation the user will get,
+                    // and staying silent is what makes this look like a bug.
+                    if (!shape->detail.empty()) {
+                        UiState::Get().SetStatus(false, shape->detail, NowSeconds());
+                    }
+                }
+                return;
+            }
+
+            if (shape->actorFormID == s_actor && shape->label == s_label && shape->sex == s_sex) {
+                return;
+            }
+
+            s_actor = shape->actorFormID;
+            s_label = shape->label;
+            s_sex = shape->sex;
+
+            auto label = shape->label;
+            auto deform = [shape](float* a_positions, std::uint32_t a_count, const std::string& a_nif,
+                               const std::string& a_shape, float a_scale, std::string& a_info) {
+                return obody::Apply(shape, a_positions, a_count, a_nif, a_shape, a_scale, a_info);
+            };
+
+            render::MannequinRenderer::Get().SetBodyMorph(std::move(deform), std::move(label));
+        }
 
         inline const char* L(const char* a_key)
         {
@@ -374,6 +427,7 @@ namespace stm::ui
                     state.SetStatus(false, Tr("$STM_Target_CrosshairEmpty"), NowSeconds());
                 }
                 data::SlotSnapshot::Get().Invalidate();
+                obody::RequestResolve();
             }
 
             ImGui::SameLine();
@@ -381,6 +435,7 @@ namespace stm::ui
                 target.ResetToPlayer();
                 state.SetStatus(true, Tr("$STM_TargetResetToThe"), NowSeconds());
                 data::SlotSnapshot::Get().Invalidate();
+                obody::RequestResolve();
             }
 
             // The two library buttons sit at the right edge of the row. Their
@@ -689,14 +744,17 @@ namespace stm::ui
                 int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
                 if (ImGui::RadioButton(Tr("$STM_Female"), sexChoice == 0)) {
                     render::MannequinRenderer::Get().InitMeshWithSex(0);
+                    obody::RequestResolve();
                 }
                 ImGui::SameLine();
                 if (ImGui::RadioButton(Tr("$STM_Male"), sexChoice == 1)) {
                     render::MannequinRenderer::Get().InitMeshWithSex(1);
+                    obody::RequestResolve();
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton(Tr("$STM_SyncTarget"))) {
                     render::MannequinRenderer::Get().ReloadForPlayerSex();
+                    obody::RequestResolve();
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton(Tr("$STM_ResetCamera"))) {
@@ -975,14 +1033,17 @@ namespace stm::ui
                             int sexChoice = render::MannequinRenderer::Get().GetCurrentSex();
                             if (ImGui::RadioButton(Tr("$STM_Female_2"), sexChoice == 0)) {
                                 render::MannequinRenderer::Get().InitMeshWithSex(0);
+                                obody::RequestResolve();
                             }
                             ImGui::SameLine();
                             if (ImGui::RadioButton(Tr("$STM_Male_2"), sexChoice == 1)) {
                                 render::MannequinRenderer::Get().InitMeshWithSex(1);
+                                obody::RequestResolve();
                             }
                             ImGui::SameLine();
                             if (ImGui::SmallButton(Tr("$STM_SyncTarget_2"))) {
                                 render::MannequinRenderer::Get().ReloadForPlayerSex();
+                                obody::RequestResolve();
                             }
                             ImGui::SameLine();
                             if (ImGui::SmallButton(Tr("$STM_ResetCamera_2"))) {
@@ -2209,6 +2270,7 @@ namespace stm::ui
         // Drain before any tab is drawn, so a result produced while the Settings
         // tab was active is not stuck in the board until the user switches back.
         PumpResults();
+        ApplyResolvedOBodyShape();
 
         const bool justOpened = !s_wasOpen;
         s_wasOpen = true;
@@ -2221,6 +2283,9 @@ namespace stm::ui
             if (!UiState::Get().hasSelection) {
                 render::MannequinRenderer::Get().SetCurrentPart(render::PreviewPart::kBody);
             }
+            // Once per opening, not once per frame: resolving costs a game-thread
+            // round trip and, when the preset did change, a body rebuild.
+            obody::RequestResolve();
         } else if (toggleImKey != ImGuiKey_None && !ImGui::IsKeyDown(toggleImKey)) {
             s_canCloseWithToggleKey = true;
         }

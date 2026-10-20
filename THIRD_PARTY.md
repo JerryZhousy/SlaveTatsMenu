@@ -71,6 +71,25 @@ notice of the change and its date.
 - **OpenVR** — Valve Corporation, BSD-3-Clause (`LICENSES/OpenVR.txt`). CommonLibSSE-NG links
   `openvr_api.lib` because `CMakeLists.txt` enables the Skyrim VR targets alongside SE and AE.
 
+## SlaveTatsMenuOBody.dll
+
+Built from `src/obody/`, shipped as `SKSE/Plugins/SlaveTatsMenuOBody.dll` next to the main plugin.
+It is installed unconditionally and stays dormant when OBody is not present.
+
+- **OBody NG plugin API** — Aietos and contributors,
+  [OBody-NG](https://github.com/Aietos/OBody-NG), GPL-3.0 (`LICENSES/OBody-NG-API.txt`).
+  `src/obody/OBodyPluginApi.h` declares the v1 interface layout (method order and the
+  `RequestPluginInterface` message id) so the add-on can call `GetPresetAssignedToActor`. No OBody
+  source is copied. Because the add-on implements that interface, **SlaveTatsMenuOBody.dll is
+  GPL-3.0**; the full text is the same GPL-3.0 shipped as `LICENSES/CommonLibSSE-NG.txt`.
+- **RaceMenu / skee64 `BodyMorph` interface** — Expired, published by skee64 for third-party
+  plugins. Only the interface layout is declared, in `src/obody/AddonMain.cpp`; it is used to read
+  the morph values already applied to an actor when OBody's own preset name cannot be resolved.
+  skee64 is not redistributed.
+- **CommonLibSSE-NG, spdlog, {fmt}** — as listed above; the add-on links the same static library.
+
+`SlaveTatsMenu.dll` itself links none of this and loads the add-on only when the DLL is present.
+
 ## Runtime dependencies, not redistributed
 
 Required in the game, but not built against and not shipped:

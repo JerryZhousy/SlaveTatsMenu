@@ -111,6 +111,29 @@
 - 预设是普通 JSON，一个预设一个文件：`Data/SKSE/Plugins/SlaveTatsMenu/Presets/<名字>.json`，
   可以手改也可以拷给别人。文件名会做净化（路径分隔符、前导点都会被替换掉），中文名可用
 
+## OBody 预览
+
+装了 OBody 之后，盘上的 `femalebody_1.nif` 是**零号身形**：形状是 OBody 在运行时用 RaceMenu
+morph 叠上去的。所以主插件的预览一直显示的是「没有身形的身体」。同包安装的
+`SlaveTatsMenuOBody.dll` 解决这一点：它虽然是独立 DLL，但随插件一起安装，没有 OBody 时
+只是安静地什么都不做，主插件的行为完全不变。
+
+- 预设名来自 OBody NG 的插件 API（`GetPresetAssignedToActor`，要求 OBody 4.3.7+）；
+- API 拿不到时（版本旧、预设文件被删）退回读 actor 身上 `OBody` 这个 morph key 的当前值，
+  也就是游戏正在显示的那套数值；
+- 预设的 BodySlide 滑块用 nif 旁边的 `.tri` 换算成顶点位移，因此 3BA / UBE / HIMBO 都能用，
+  前提是 BodySlide 构建时勾了 **Build Morphs**；
+- 骨骼缩放类滑块不参与（v1），预览固定用 weight 100 的 `_1` 网格；
+- 没有分配预设的角色保持零号身形；生效时网格信息行会多出 `OBody: <预设名>`。
+
+解析在打开菜单时做一次，目标 / 性别 / 预设变化时再做一次；`SliderPresets` 目录在第一次需要预设时
+由网格加载线程扫描，变形也在同一个线程上完成，游戏线程与渲染线程都不会等它。`PreviewUseOBody = 0` 可关闭。
+
+**为什么是独立 DLL**：OBody 的接口头是 GPL-3.0，skee64 的 morph 接口也只在装了 RaceMenu 的
+机器上存在。主插件不链接、不包含其中任何一个，只在运行时 `GetModuleHandle` 找这个 DLL，
+两边通过 `include/StmOBodyApi.h`（纯 C 函数表）通信。因此 `SlaveTatsMenuOBody.dll` 以
+GPL-3.0 分发，主插件不受影响。
+
 ## 配置
 
 `Data/SKSE/Plugins/SlaveTatsMenu/SlaveTatsMenu.ini`
@@ -204,7 +227,10 @@ src/
   ops/                  应用 / 改色 / 移除 / 清空 / 同步 / 预设，全部返回真实结果
   ui/                   ImGui 界面与热键
   diag/                 诊断探针、调用追踪、可测的差异比较
+  obody/                主插件侧：动态加载附属 DLL、解析结果回传
 tools/selftest/         离线自检程序
+tools/obodytest/        附属插件的离线自检（.tri 解析 / 预设 XML / 变形量级）
+src/obody/              附属插件本体：OBody API、预设解析、.tri 解析、变形
 include/
   SlaveTatsNG_Interface.h   上游官方接口头（原样使用，不要改）
   JContainers/              JContainers 接口头
@@ -224,6 +250,9 @@ include/
   `"SlaveTatsMenu-DB"` 的前 8 个字节当成指针追，导致访问违例崩溃。
 - JContainers 不可用时整体降级：清单退回 JSON 扫描、改色与预设读写不可用，
   但插件仍会启动，不会 abort。
+- OBody 预览有三处刻意的近似：骨骼缩放类滑块不参与变形（预设里靠它撑起来的部位会偏小）、
+  固定用 weight 100 的 `_1` 网格（不按角色体重在 `_0`/`_1` 之间插值）、tri 形状必须和 NIF
+  形状同名且顶点数对得上，否则宁可不变形也不乱拉。
 - 3D 预览的墨色是「预览友好」而不是逐像素还原：贴图自带彩色而墨色仍是默认黑
   （`DefaultColor = 0x000000`）时，预览直接显示贴图原色，好让图案看得清；游戏里
   同一张图在默认黑墨下其实是全黑的。单色线稿照旧乘墨色，与游戏一致。

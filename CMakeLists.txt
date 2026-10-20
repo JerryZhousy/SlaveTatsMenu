@@ -62,6 +62,9 @@ set(STM_SOURCES
     src/ops/TattooOps.h
     src/data/TargetState.cpp
     src/data/TargetState.h
+    src/obody/OBodyBridge.cpp
+    src/obody/OBodyBridge.h
+    include/StmOBodyApi.h
     src/ui/InputHandler.h
     src/ui/Ui.h
     src/ui/UiMain.cpp
@@ -118,6 +121,61 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/SKSE/Plugins"
 )
 
+# ---------------------------------------------------------------------------
+# Optional add-on: the OBody-aware 3D preview.
+#
+# Separate DLL on purpose. The main plugin must keep loading on a machine with
+# no OBody and no RaceMenu-specific API, and this half talks to OBody NG's
+# plugin API and to skee64's morph interface - neither of which exists there.
+# The two halves only share include/StmOBodyApi.h, a plain C function table.
+# ---------------------------------------------------------------------------
+set(STM_OBODY_SOURCES
+    src/obody/AddonMain.cpp
+    src/obody/MorphApply.cpp
+    src/obody/MorphApply.h
+    src/obody/OBodyPluginApi.h
+    src/obody/PresetXml.cpp
+    src/obody/PresetXml.h
+    src/obody/TriFile.cpp
+    src/obody/TriFile.h
+    include/StmOBodyApi.h
+)
+
+add_library(SlaveTatsMenuOBody SHARED ${STM_OBODY_SOURCES})
+
+target_include_directories(SlaveTatsMenuOBody PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(SlaveTatsMenuOBody PRIVATE
+    CommonLibSSE::CommonLibSSE
+)
+
+target_compile_definitions(SlaveTatsMenuOBody PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+    _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR
+    # Selects the one place StmOBodyApi.h is allowed to declare the export.
+    STM_OBODY_EXPORTS
+)
+
+# Same single source of truth as the main target: fomod/info.xml is stamped from
+# ${PROJECT_VERSION}, so a hand-written 1.0.0.0 here would be the version drift
+# this block exists to prevent.
+target_compile_definitions(SlaveTatsMenuOBody PRIVATE
+    STM_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    STM_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    STM_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+    STM_VERSION_STRING="${PROJECT_VERSION}"
+)
+
+set_target_properties(SlaveTatsMenuOBody PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/SKSE/Plugins"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/SKSE/Plugins"
+)
+
 # Offline self-test for the pure data layer. Deliberately does NOT link
 # CommonLibSSE and does not use the plugin PCH: CacheParser only needs the
 # standard library and nlohmann/json, which is exactly what makes it testable
@@ -138,4 +196,26 @@ target_include_directories(stm_selftest PRIVATE
 set_target_properties(stm_selftest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build/selftest"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/build/selftest"
+)
+
+# Offline check for the OBody data layer (tri parsing, preset XML, deformation).
+# Same rule as the data selftest: standard library only, so it runs anywhere.
+add_executable(stm_obodytest
+    tools/obodytest/main.cpp
+    src/obody/MorphApply.cpp
+    src/obody/MorphApply.h
+    src/obody/PresetXml.cpp
+    src/obody/PresetXml.h
+    src/obody/TriFile.cpp
+    src/obody/TriFile.h
+)
+
+target_include_directories(stm_obodytest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+set_target_properties(stm_obodytest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build/obodytest"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/build/obodytest"
 )

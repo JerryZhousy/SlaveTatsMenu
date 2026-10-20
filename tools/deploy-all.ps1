@@ -15,6 +15,23 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
+# Where hot-swapped DLLs go. E:\待删除 is this machine's scratch drive; fall back
+# to TEMP so the script still works on a machine without an E: volume instead of
+# failing (or worse, creating one).
+function Get-TrashDir {
+    foreach ($candidate in @('E:\待删除', (Join-Path $env:TEMP 'SlaveTatsMenu-old'))) {
+        try {
+            if (-not (Test-Path $candidate)) {
+                New-Item -ItemType Directory -Path $candidate -Force -ErrorAction Stop | Out-Null
+            }
+            return $candidate
+        } catch {
+            continue
+        }
+    }
+    return $null
+}
+
 Write-Host "=== SlaveTatsMenu Pipeline ===" -ForegroundColor Cyan
 
 # 1. Build
@@ -73,9 +90,10 @@ if ($MoPath -and (Test-Path $MoPath)) {
         # File might be locked by running game; rename trick allows placing new DLL seamlessly
         $oldDll = "$targetDll.pending_old"
         if (Test-Path $oldDll) {
-            $trashDir = 'E:\待删除'
-            if (-not (Test-Path $trashDir)) { New-Item -ItemType Directory -Path $trashDir -Force | Out-Null }
-            try { Move-Item $oldDll (Join-Path $trashDir ("SlaveTatsMenu_" + [System.Guid]::NewGuid().ToString('N') + ".dll.old")) -Force -ErrorAction SilentlyContinue } catch {}
+            $trashDir = Get-TrashDir
+            if ($trashDir) {
+                try { Move-Item $oldDll (Join-Path $trashDir ("SlaveTatsMenu_" + [System.Guid]::NewGuid().ToString('N') + ".dll.old")) -Force -ErrorAction SilentlyContinue } catch {}
+            }
         }
         Move-Item $targetDll $oldDll -Force
         Copy-Item $dll $targetDll -Force
@@ -87,6 +105,31 @@ if ($MoPath -and (Test-Path $MoPath)) {
     New-Item -ItemType Directory -Path $moTransDir -Force | Out-Null
     Copy-Item (Join-Path $root 'Interface\Translations\*') $moTransDir -Force
     Write-Host "  -> Deployed translations to $moTransDir" -ForegroundColor Green
+
+    # The OBody-aware preview. A second DLL, but shipped and deployed with the
+    # main plugin: it is inert without OBody, and a test install that silently
+    # lacked it would look like a bug.
+    $obodyDll = Join-Path $root 'SKSE\Plugins\SlaveTatsMenuOBody.dll'
+    if (Test-Path $obodyDll) {
+        $targetOBody = Join-Path $moModDir 'SlaveTatsMenuOBody.dll'
+        try {
+            Copy-Item $obodyDll $targetOBody -Force -ErrorAction Stop
+            Write-Host "  -> Deployed OBody add-on to $targetOBody" -ForegroundColor Green
+        } catch {
+            $oldOBody = "$targetOBody.pending_old"
+            if (Test-Path $oldOBody) {
+                $trashDir = Get-TrashDir
+                if ($trashDir) {
+                    try { Move-Item $oldOBody (Join-Path $trashDir ("SlaveTatsMenuOBody_" + [System.Guid]::NewGuid().ToString('N') + ".dll.old")) -Force -ErrorAction SilentlyContinue } catch {}
+                }
+            }
+            Move-Item $targetOBody $oldOBody -Force
+            Copy-Item $obodyDll $targetOBody -Force
+            Write-Host "  -> Deployed OBody add-on (hot-swapped while game running) to $targetOBody" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  -> OBody add-on not built, skipped" -ForegroundColor DarkGray
+    }
 
     $moDownloads = Join-Path $MoPath 'downloads'
     if (Test-Path $moDownloads) {

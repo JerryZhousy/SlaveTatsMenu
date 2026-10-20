@@ -56,6 +56,7 @@ namespace stm
         if (mCol < 0 || mCol > 1) mCol = 1;
         mannequinColor = static_cast<MannequinColor>(mCol);
         slotRefreshMs = std::clamp(static_cast<int>(ini.GetLongValue("UI", "SlotRefreshMs", 250)), 50, 5000);
+        previewUseOBody = ini.GetBoolValue("UI", "PreviewUseOBody", true);
 
         probeEnabled = ini.GetBoolValue("Debug", "Probe", false);
         probeIntervalMs = std::clamp(static_cast<int>(ini.GetLongValue("Debug", "ProbeIntervalMs", 1000)), 100, 60000);
@@ -102,6 +103,7 @@ namespace stm
         ini.SetDoubleValue("UI", "FontScale", fontScale);
         ini.SetLongValue("UI", "MannequinColor", static_cast<long>(mannequinColor));
         ini.SetLongValue("UI", "SlotRefreshMs", slotRefreshMs);
+        ini.SetBoolValue("UI", "PreviewUseOBody", previewUseOBody);
 
         ini.SetBoolValue("Debug", "Probe", probeEnabled);
         ini.SetLongValue("Debug", "ProbeIntervalMs", probeIntervalMs);

@@ -46,5 +46,6 @@ You can change this later from the in-game Settings tab, or by editing Language 
         </group>
       </optionalFileGroups>
     </installStep>
+
   </installSteps>
 </config>

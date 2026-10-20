@@ -12,6 +12,7 @@
         Options/Chinese/SlaveTatsMenu.ini     generated from the canonical INI
         SKSE/Plugins/SlaveTatsMenu.dll
         SKSE/Plugins/SlaveTatsMenu/SlaveTatsMenu.ini
+        SKSE/Plugins/SlaveTatsMenuOBody.dll                  OBody-aware preview
         LICENSE
         THIRD_PARTY.md
         LICENSES/*
@@ -59,6 +60,13 @@ $dll = Join-Path $root 'SKSE\Plugins\SlaveTatsMenu.dll'
 $ini = Join-Path $root 'SKSE\Plugins\SlaveTatsMenu\SlaveTatsMenu.ini'
 $payload.Add($dll)
 $payload.Add($ini)
+
+# The OBody-aware preview is a second DLL, but it ships with the plugin rather
+# than behind a wizard step: it is inert when OBody is absent, and an install
+# that silently lacks it looks like a bug. Build the SlaveTatsMenuOBody target
+# before packaging.
+$obodyDll = Join-Path $root 'SKSE\Plugins\SlaveTatsMenuOBody.dll'
+$payload.Add($obodyDll)
 
 $transDir = Join-Path $root 'Interface\Translations'
 $transFiles = @(Get-ChildItem $transDir -File -ErrorAction SilentlyContinue | Sort-Object Name)
@@ -247,9 +255,11 @@ try {
 
     if (-not $NoFomod) {
         $names = @($zip.Entries | ForEach-Object FullName)
-        foreach ($required in 'fomod/info.xml', 'fomod/ModuleConfig.xml',
-                               'Options/English/SlaveTatsMenu.ini', 'Options/Chinese/SlaveTatsMenu.ini') {
-            if ($names -notcontains $required) { throw "archive is missing $required" }
+        $required = @('fomod/info.xml', 'fomod/ModuleConfig.xml',
+                      'Options/English/SlaveTatsMenu.ini', 'Options/Chinese/SlaveTatsMenu.ini',
+                      'SKSE/Plugins/SlaveTatsMenuOBody.dll')
+        foreach ($entry in $required) {
+            if ($names -notcontains $entry) { throw "archive is missing $entry" }
         }
         Write-Output 'FOMOD present: fomod/info.xml + fomod/ModuleConfig.xml (UI language step).'
     }

@@ -16,6 +16,7 @@ It talks to SlaveTatsNG's published C++ interface directly through SKSE rather t
 | [JContainers SE](https://www.nexusmods.com/skyrimspecialedition/mods/16495) | required |
 | [SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352) | required, it hosts the window |
 | RaceMenu | needed by SlaveTats itself; its `skee64.ini` supplies the per-area slot limits this plugin displays |
+| [OBody NG](https://www.nexusmods.com/skyrimspecialedition/mods/77016) 4.3.7+ | optional: lets the 3D preview show the selected actor's preset instead of the zeroed body |
 
 Built with CommonLibSSE-NG, so the DLL covers SE 1.5.39+ and AE. SE 1.5.97 is the runtime it has actually been played through; AE loads but is unverified. VR is not supported.
 
@@ -41,8 +42,19 @@ Results appear in the status line at the bottom of the window:
 - `DEFERRED` means the data is written but the target's 3D was not loaded, so re-apply once the actor is in view.
 - `FAILED` comes with a reason.
 
-## Configuration
+### OBody preview
 
+An OBody install ships a *zeroed* body: the shape is applied at runtime, so the NIF on disk has none of it. The bundled `SlaveTatsMenuOBody.dll` makes the preview draw the preset the selected actor is actually wearing. It is installed by default and does nothing when OBody is absent:
+
+- the preset name comes from OBody NG's plugin API (`GetPresetAssignedToActor`, OBody 4.3.7 or newer);
+- if that fails - older OBody, or the preset XML is gone - it falls back to the `OBody` morph values RaceMenu already holds for the actor, which is what the game is showing anyway;
+- the preset's BodySlide sliders are turned into vertex offsets with the body's `.tri` file (the one sitting next to the NIF), so 3BA, UBE and HIMBO work as long as BodySlide was run with **Build Morphs**;
+- bone-scale sliders are not applied, and the preview always renders the weight-100 (`_1`) mesh;
+- an actor with no assigned preset keeps the zeroed body, and the mesh line says `OBody: <preset>` when a shape is in use.
+
+Resolving runs once per menu opening, and again when the target, the sex or the preset changes. The `SliderPresets` folder is scanned on the loading worker the first time a preset is needed, and the body is deformed there too, so neither the game thread nor the render thread ever waits for it. `PreviewUseOBody = 0` in the INI turns it off.
+
+## Configuration
 `Data/SKSE/Plugins/SlaveTatsMenu/SlaveTatsMenu.ini`
 
 ```ini
@@ -56,6 +68,7 @@ Language = en           ; en / zh
 WindowWidth = 1280.0
 WindowHeight = 720.0
 SlotRefreshMs = 250     ; how often the slot list is rebuilt
+PreviewUseOBody = 1     ; draw the target's OBody preset (needs the add-on DLL)
 
 [Debug]
 Probe = 0               ; diagnostic probe, writes only changes to the log

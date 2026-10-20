@@ -14,6 +14,13 @@ namespace stm::render
         std::string                  sourcePath;
         std::string                  shapeName;
         bool                         success = false;
+
+        // The parser recenters the mesh and scales it to fit the viewport, and
+        // swaps Y/Z on the way. Anything that works in NIF units - the OBody
+        // morph offsets, for instance - has to apply the same transform or it
+        // will move vertices by a body length instead of a millimetre.
+        float normalizeScale = 1.0f;
+        bool  yzSwapped = true;
     };
 
     enum class BodySex
@@ -48,7 +55,8 @@ namespace stm::render
             std::size_t a_partitionSize,
             std::uint32_t a_bsVersion,
             std::vector<MannequinVertex>& a_outVerts,
-            std::vector<std::uint32_t>& a_outIndices
+            std::vector<std::uint32_t>& a_outIndices,
+            float* a_outScale = nullptr
         );
 
         static bool ParseNiSkinPartition(
@@ -56,7 +64,8 @@ namespace stm::render
             std::size_t a_size,
             std::uint32_t a_bsVersion,
             std::vector<MannequinVertex>& a_outVerts,
-            std::vector<std::uint32_t>& a_outIndices
+            std::vector<std::uint32_t>& a_outIndices,
+            float* a_outScale = nullptr
         );
 
         static bool ParseDirectTriShape(
@@ -66,7 +75,8 @@ namespace stm::render
             std::uint32_t a_numVertices,
             std::uint64_t a_vertexDesc,
             std::vector<MannequinVertex>& a_outVerts,
-            std::vector<std::uint32_t>& a_outIndices
+            std::vector<std::uint32_t>& a_outIndices,
+            float* a_outScale = nullptr
         );
 
         // 半精度浮点 (float16) 转单精度浮点 (float32)

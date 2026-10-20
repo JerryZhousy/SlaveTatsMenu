@@ -39,6 +39,11 @@ namespace stm
         MannequinColor mannequinColor = MannequinColor::kFlesh; // 3D模特人体颜色风格
         int   slotRefreshMs = 250;  // how often the applied-slot snapshot is rebuilt
 
+        // Draws the target's OBody preset instead of the zeroed body. Only has
+        // an effect when the optional SlaveTatsMenuOBody.dll is installed; on
+        // by default because an OBody install looks wrong without it.
+        bool previewUseOBody = true;
+
         // [Debug]
         bool        probeEnabled = false;
         int         probeIntervalMs = 1000;

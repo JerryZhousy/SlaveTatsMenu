@@ -51,13 +51,18 @@ namespace stm
 
     // Queues work onto the game's task queue (runs at the end of the frame).
     // All engine / JContainers access must go through here.
-    inline void PostToGameThread(std::function<void()> a_fn)
+    //
+    // Returns false when the queue could not be reached and the job was dropped.
+    // Callers that hold a "request in flight" flag must clear it in that case -
+    // otherwise one dropped job wedges the flag for the rest of the session.
+    inline bool PostToGameThread(std::function<void()> a_fn)
     {
         if (const auto task = SKSE::GetTaskInterface()) {
             task->AddTask(std::move(a_fn));
-        } else {
-            SKSE::log::error("Tasks: task interface unavailable, dropping job");
+            return true;
         }
+        SKSE::log::error("Tasks: task interface unavailable, dropping job");
+        return false;
     }
 
     // Mailbox between the task queue and the UI.
