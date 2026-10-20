@@ -101,6 +101,19 @@ namespace stm::ng
         {
             return a_fail ? Status::kFailed : Status::kOk;
         }
+
+        // The two high level entry points do not follow fail_t. Both end with
+        // "return true" after doing the work and return false on every path
+        // that did not: unknown tattoo, already applied, add failed, and the
+        // internal synchronise being aborted. Reading them through FromFailT
+        // inverted the answer, so a successful add looked like a failure (which
+        // is why the preset fallback never counted one) and a dropped sync
+        // looked like success (which is how a tattoo ends up in the ledger and
+        // not on the body while every log line says "ok").
+        Status FromHighLevel(bool a_ok)
+        {
+            return a_ok ? Status::kOk : Status::kFailed;
+        }
     }
 
     const char* ToString(Status a_status)
@@ -170,11 +183,13 @@ namespace stm::ng
         const std::string section(a_section);
         const std::string name(a_name);
 
-        // NOTE: upstream returns "no error" (false) both when the tattoo does
-        // not exist and when it is already applied, and in the latter case it
-        // does NOT update colour/alpha. Callers must verify the ledger instead
-        // of trusting this return value.
-        return FromFailT(iface->simple_add_tattoo(a_actor, Bs(section), Bs(name), static_cast<int>(a_color), a_sync, false, a_alpha));
+        // NOTE: upstream returns false both when the tattoo does not exist and
+        // when it is already applied (and in the latter case it does NOT update
+        // colour/alpha), and it also returns false when the synchronise it was
+        // asked to run was dropped. Callers must verify the ledger instead of
+        // trusting this return value; when the ledger did change, false means
+        // the visual sync did not happen.
+        return FromHighLevel(iface->simple_add_tattoo(a_actor, Bs(section), Bs(name), static_cast<int>(a_color), a_sync, false, a_alpha));
     }
 
     Status SimpleRemoveTattoo(RE::Actor* a_actor, std::string_view a_section, std::string_view a_name, bool a_sync)
@@ -187,10 +202,10 @@ namespace stm::ng
         const std::string section(a_section);
         const std::string name(a_name);
 
-        return FromFailT(iface->simple_remove_tattoo(a_actor, Bs(section), Bs(name), a_sync, false));
+        return FromHighLevel(iface->simple_remove_tattoo(a_actor, Bs(section), Bs(name), a_sync, false));
     }
 
-    Status Synchronize(RE::Actor* a_actor)
+    Status Synchronize(RE::Actor* a_actor, bool a_forceUpdated)
     {
         const auto* iface = Iface();
         if (!iface || !a_actor) {
@@ -220,6 +235,17 @@ namespace stm::ng
                 SKSE::log::info("SlaveTatsNG: upstream uses .SlaveTats.version = '{}' (we were stamping '{}'), switching to it",
                     current, g_ledgerVersion);
                 g_ledgerVersion = current;
+            }
+
+            // synchronize_tattoos_internal cancels without touching a single
+            // overlay while ".SlaveTats.updated" is 0, and returns "no error"
+            // when it does. Every path inside this plugin raises the flag as
+            // part of its write, so the default keeps upstream's own check
+            // meaningful; a user-requested force sync raises it first, because
+            // a ledger written by a mod that never raised the flag could not be
+            // pushed onto the body any other way.
+            if (a_forceUpdated) {
+                jc::FormDbSetInt(a_actor, ".SlaveTats.updated", 1);
             }
         }
 

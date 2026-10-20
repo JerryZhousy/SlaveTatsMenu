@@ -34,12 +34,14 @@ Nothing to enable in the MCM, no ESP to activate.
 
 The window is three panels. The left one lists every mod that ships tattoos, filtered by the body area you select at the top. The middle one is the tattoo list for whatever is selected on the left, and it stays collapsed until you pick a mod; clicking the same entry again closes it and hands its width back to the mod list. The right one shows the selected tattoo's texture, colour, opacity and target slot, with the apply and remove actions underneath, followed by the slot status of the current body area, presets, and the diagnostics header.
 
+The catalogue is rebuilt when a game loads, and once more the first time a window is opened after that load. The second pass exists because SlaveTatsNG binds its tattoo cache per save and the two are not ordered: a rebuild that wins the race would leave the whole session reading the `slavetats_cache.json` fallback until you pressed `Rescan`. It is skipped when the live API source already won, so it never costs a full pack scan for nothing.
+
 The 3D preview in that right-hand panel follows the area picked at the top: `All` shows the whole body, and picking a tattoo switches the preview to that tattoo's own part, so there is no second part selector to keep in sync. Its ink is deliberately optimistic. A texture that carries its own colours is drawn as authored while the ink colour is still the default black, which keeps the pattern legible; a black ink colour makes the game render that same texture black. Line art is tinted the way the game tints it.
 
 Results appear in the status line at the bottom of the window:
 
 - `OK` means the ledger changed as requested and the overlay was synchronised.
-- `DEFERRED` means the data is written but the target's 3D was not loaded, so re-apply once the actor is in view.
+- `DEFERRED` means the data is written but the sync did not run: the target's 3D was not loaded, or SlaveTatsNG gave up for another reason (its NiOverride lock was taken, or adding the overlay nodes failed). With `AutoFinishSync` on - the default - the menu finishes that sync itself the moment the body is there, and says so when it does.
 - `FAILED` comes with a reason.
 
 ### OBody preview
@@ -63,6 +65,7 @@ ToggleKey = 0x44        ; DirectInput scan code, 0x44 = F10
 DefaultColor = 0x000000 ; starting colour for a new tattoo
 DefaultAlpha = 1.0
 Language = en           ; en / zh
+AutoFinishSync = 1      ; finish the syncs SlaveTatsNG dropped while the window is open
 
 [UI]
 WindowWidth = 1280.0
@@ -82,6 +85,8 @@ CallTrace = 0           ; log which module called each mutating SlaveTatsNG func
 Presets are plain JSON, one file per preset, in `Data/SKSE/Plugins/SlaveTatsMenu/Presets/`. They can be edited by hand or handed to someone else.
 
 The log is at `Documents/My Games/Skyrim Special Edition/SKSE/SlaveTatsMenu.log`. It records the boot handshake, which catalogue source won, and the outcome of every operation. When a tattoo shows up in the ledger but not on the body, turn on the probe, press `Snapshot now`, and the log will name the likely cause: 3D not loaded, a stuck `.updated` flag, an empty `.SlaveTats.version`, or another overlay mod holding the slot.
+
+That stuck `.updated` flag is worth knowing about: it is SlaveTatsNG's own "this actor still needs a sync" marker, raised by every ledger write and cleared only by a sync that runs to the end. Nothing in SlaveTatsNG ever reads it again, so a sync that is skipped - the body was not loaded yet, the NiOverride lock was held by something else - strands the actor until something calls sync again. That is what "the tattoo is in the menu but not on the body, and force sync fixes it" looks like, and it is not specific to this menu: a mod that applies tattoos on an actor it has not looked at hits the same wall. `AutoFinishSync` closes the loop while the window is open, retrying a flagged actor up to five times, two seconds apart.
 
 ## Build from source
 

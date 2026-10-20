@@ -12,6 +12,7 @@
 #include "data/TattooDatabase.h"
 #include "diag/Probe.h"
 #include "obody/OBodyBridge.h"
+#include "ops/PendingSync.h"
 #include "ops/PresetOps.h"
 #include "ops/TattooOps.h"
 #include "render/MannequinRenderer.h"
@@ -1352,6 +1353,29 @@ namespace stm::ui
             }
         }
 
+        // One catalogue refresh per load, taken on the first opening of either
+        // window. main.cpp rebuilds the catalogue on kPostLoadGame, but that
+        // message and SlaveTatsNG binding this save's cache are not ordered: if
+        // the API still answers "nothing" at that point, the whole session sits
+        // on the JSON fallback until someone presses "rescan". By the time a
+        // window opens the player is in game for certain, so the retry lands.
+        void RefreshLibraryOnOpen()
+        {
+            auto& db = data::TattooDatabase::Get();
+
+            const auto before = db.source();
+            if (!db.RefreshOnOpen()) {
+                return;
+            }
+
+            // The list the current selection was made from may not exist any
+            // more - a fallback-only entry the game does not actually have, for
+            // instance - so do not keep pointing at it.
+            if (db.source() != before) {
+                UiState::Get().hasSelection = false;
+            }
+        }
+
         void DrawStatusLine()
         {
             auto& state = UiState::Get();
@@ -2247,12 +2271,18 @@ namespace stm::ui
     void __stdcall RenderMenu()
     {
         PumpResults();
+        // Same watchdog as the floating window: whichever of the two is open,
+        // a sync SlaveTatsNG dropped is finished while the user is looking.
+        ops::pending::Tick();
+        RefreshLibraryOnOpen();
         DrawMain();
     }
 
     void __stdcall RenderSettings()
     {
         PumpResults();
+        ops::pending::Tick();
+        RefreshLibraryOnOpen();
         DrawSettings();
     }
 
@@ -2270,6 +2300,10 @@ namespace stm::ui
         // Drain before any tab is drawn, so a result produced while the Settings
         // tab was active is not stuck in the board until the user switches back.
         PumpResults();
+        ops::pending::Tick();
+        // Cheap flag check every frame rather than only on "just opened": a
+        // save can also finish loading while the window is already up.
+        RefreshLibraryOnOpen();
         ApplyResolvedOBodyShape();
 
         const bool justOpened = !s_wasOpen;

@@ -9,6 +9,7 @@
 #include "diag/CallTrace.h"
 #include "diag/Probe.h"
 #include "obody/OBodyBridge.h"
+#include "ops/PendingSync.h"
 #include "render/MannequinRenderer.h"
 #include "ui/InputHandler.h"
 #include "ui/Ui.h"
@@ -46,6 +47,16 @@ namespace
                 // wins for the rest of the session.
                 SKSE::log::info("Boot: refreshing the tattoo catalogue now that a game is loaded");
                 stm::data::TattooDatabase::Get().Rebuild(/*a_allowCompile=*/true);
+
+                // ... and one more pass the first time the window opens: this
+                // message and SlaveTatsNG binding its per-save cache are not
+                // ordered, so a rebuild that ran first would leave the session
+                // on the JSON fallback until someone pressed "rescan".
+                stm::data::TattooDatabase::Get().RequestRefreshOnOpen();
+
+                // The actors watched for a dropped sync belong to the previous
+                // session's FormIDs; a load starts from a clean slate.
+                stm::ops::pending::Reset();
             }
             break;
 

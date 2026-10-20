@@ -42,19 +42,44 @@ namespace stm::ops
             ResultBoard::Get().Push(std::move(a_result));
         }
 
-        // Upstream's synchronize_tattoos_internal bails out without doing
-        // anything - and without clearing .SlaveTats.updated - while the target's
-        // 3D is not loaded. So a ledger write can be perfectly correct and still
-        // not be visible until later; say so instead of claiming success.
+        // Upstream's synchronize_tattoos_internal aborts on several paths
+        // without doing any work - and without clearing .SlaveTats.updated:
+        // 3D not loaded, the NiOverride lock already taken, AddOverlays or the
+        // ledger upgrade failing. It reports those as an error (fail_t true),
+        // so the call site can tell "the sync ran" from "the sync was dropped"
+        // instead of claiming success for both. A dropped sync is not a
+        // failure of the write, it is a postponed one: ops/PendingSync retries
+        // it as soon as the body is there.
         bool SyncDeferred(RE::Actor* a_actor)
         {
             return a_actor != nullptr && !a_actor->Is3DLoaded();
         }
 
-        void PushOutcome(const char* a_action, std::string a_target, RE::Actor* a_actor, std::string a_okDetail, std::string a_deferredDetail)
+        // Upstream's own pending marker: every ledger write raises it, and only
+        // a synchronisation that reached the end clears it. Reading it is how a
+        // dropped sync is told apart from one that ran - and, when the call is
+        // answered from the task queue rather than on the main thread, from one
+        // that has been posted but has not run yet (both are "not on the body
+        // yet", which is what the status line is about).
+        bool SyncStillPending(RE::Actor* a_actor)
+        {
+            if (!a_actor || !jc::Ready()) {
+                return true;  // cannot read the flag: trust the call's verdict
+            }
+            return jc::FormDbGetInt(a_actor, ".SlaveTats.updated", 0) != 0;
+        }
+
+        void PushOutcome(const char* a_action, std::string a_target, RE::Actor* a_actor, std::string a_okDetail, std::string a_deferredDetail,
+            ng::Status a_syncStatus = ng::Status::kOk)
         {
             if (SyncDeferred(a_actor)) {
                 Push(OpResult::Deferred(a_action, std::move(a_target), std::move(a_deferredDetail)));
+            } else if (a_syncStatus == ng::Status::kFailed && SyncStillPending(a_actor)) {
+                // The body is there, so this is not the 3D case: upstream
+                // returned early for another reason (NiOverride lock, overlays
+                // or upgrade) and left the pending flag set. Say "postponed",
+                // not "ok", and let the watcher finish it.
+                Push(OpResult::Deferred(a_action, std::move(a_target), Tr("$STM_Ops_SyncAbortedRetrying")));
             } else {
                 Push(OpResult::Ok(a_action, std::move(a_target), std::move(a_okDetail)));
             }
@@ -131,7 +156,8 @@ namespace stm::ops
         // forces a resynchronisation. This is the only way to restyle an existing
         // tattoo: upstream's simple_add_tattoo short-circuits when it is already
         // applied.
-        bool RestyleApplied(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t a_color, float a_alpha, std::uint32_t a_glow)
+        bool RestyleApplied(RE::Actor* a_actor, std::string_view a_area, int a_slot, std::uint32_t a_color, float a_alpha, std::uint32_t a_glow,
+            ng::Status* a_outSync = nullptr)
         {
             const auto handle = ng::GetAppliedInSlot(a_actor, a_area, a_slot);
             if (handle <= 0) {
@@ -144,7 +170,10 @@ namespace stm::ops
             jc::MapSetFlt(obj, "invertedAlpha", 1.0f - a_alpha);
             jc::FormDbSetInt(a_actor, ".SlaveTats.updated", 1);
 
-            ng::Synchronize(a_actor);
+            const auto syncStatus = ng::Synchronize(a_actor);
+            if (a_outSync) {
+                *a_outSync = syncStatus;
+            }
 
             // Read back: the ledger is the only authority we trust. All three
             // fields matter - verifying only the colour reported "ok" while a
@@ -183,7 +212,8 @@ namespace stm::ops
                     return;
                 }
 
-                const bool ok = RestyleApplied(actor, existingArea, existingSlot, a_request.color, a_request.alpha, a_request.glow);
+                ng::Status syncStatus = ng::Status::kOk;
+                const bool ok = RestyleApplied(actor, existingArea, existingSlot, a_request.color, a_request.alpha, a_request.glow, &syncStatus);
                 data::SlotSnapshot::Get().Invalidate();
 
                 if (!ok) {
@@ -195,7 +225,8 @@ namespace stm::ops
                     name,
                     actor,
                     Tr("$STM_Ops_AlreadyOn") + existingArea + " #" + std::to_string(existingSlot) + Tr("$STM_Ops_ColorGlowOpacityUpdated"),
-                    Tr("$STM_Ops_SyncPostponed3D"));
+                    Tr("$STM_Ops_SyncPostponed3D"),
+                    syncStatus);
                 return;
             }
 
@@ -249,7 +280,7 @@ namespace stm::ops
                             jc::MapSetInt(fresh, "glow", static_cast<std::int32_t>(a_request.glow));
                             jc::MapSetFlt(fresh, "invertedAlpha", 1.0f - a_request.alpha);
                             jc::FormDbSetInt(actor, ".SlaveTats.updated", 1);
-                            ng::Synchronize(actor);
+                            const auto syncStatus = ng::Synchronize(actor);
 
                             const auto landed = ng::GetAppliedInSlot(actor, a_request.tattoo.area, a_request.targetSlot);
                             data::SlotSnapshot::Get().Invalidate();
@@ -273,7 +304,8 @@ namespace stm::ops
                                     target,
                                     actor,
                                     Tr("$STM_Ops_PlacedRequestedSlot"),
-                                    Tr("$STM_Ops_WrittenRequestedSlotPostponed"));
+                                    Tr("$STM_Ops_WrittenRequestedSlotPostponed"),
+                                    syncStatus);
                                 return;
                             }
 
@@ -298,7 +330,8 @@ namespace stm::ops
                                     target,
                                     actor,
                                     Tr("$STM_Ops_PlacedAutoSlot"),
-                                    Tr("$STM_Ops_WrittenAutoSlotPostponed"));
+                                    Tr("$STM_Ops_WrittenAutoSlotPostponed"),
+                                    syncStatus);
                                 return;
                             }
 
@@ -311,13 +344,18 @@ namespace stm::ops
                 }
             }
 
-            // Auto slot: upstream picks the first free one and synchronises internally
-            // (a_sync = true), so no extra synchronize call here.
+            // Auto slot: upstream picks the first free one and synchronises
+            // internally (a_sync = true), so no extra synchronize call here.
+            // Its return value is also the only report on that internal sync:
+            // with the entry present in the ledger the add cannot have failed,
+            // so "false" means the sync it was asked to run was dropped.
             const auto status = ng::SimpleAddTattoo(actor, section, name, a_request.color, a_request.alpha, true);
             const int landed = FindAppliedSlot(actor, section, name, nullptr);
             data::SlotSnapshot::Get().Invalidate();
 
             if (landed >= 0) {
+                ng::Status syncStatus = status;
+
                 // If glow was requested, SimpleAddTattoo cannot set glow: write it
                 // into the ledger and resynchronize.
                 if (a_request.glow != 0) {
@@ -325,7 +363,7 @@ namespace stm::ops
                     if (handle > 0) {
                         jc::MapSetInt(jc::ObjId{ handle }, "glow", static_cast<std::int32_t>(a_request.glow));
                         jc::FormDbSetInt(actor, ".SlaveTats.updated", 1);
-                        ng::Synchronize(actor);
+                        syncStatus = ng::Synchronize(actor);
                         data::SlotSnapshot::Get().Invalidate();
                     }
                 }
@@ -350,7 +388,8 @@ namespace stm::ops
                     name,
                     actor,
                     Tr("$STM_Ops_AppliedToTarget"),
-                    Tr("$STM_Ops_RecordedLedgerPostponed"));
+                    Tr("$STM_Ops_RecordedLedgerPostponed"),
+                    syncStatus);
             } else if (status == ng::Status::kUnavailable) {
                 Push(OpResult::Fail("Apply", name, Tr("$STM_Ops_SlaveTatsUnavailable")));
             } else {
@@ -548,13 +587,20 @@ namespace stm::ops
 
             ng::RegisterKnownTarget(actor);
 
-            const auto status = ng::Synchronize(actor);
+            // Forced: upstream cancels the whole rebuild while .SlaveTats.updated
+            // is 0, and a ledger written by a mod that never raised that flag
+            // could not be pushed onto the body any other way. "Force sync" is
+            // the one button that has to mean it.
+            const auto status = ng::Synchronize(actor, /*a_forceUpdated=*/true);
             data::SlotSnapshot::Get().Invalidate();
 
-            if (status != ng::Status::kOk) {
-                Push(OpResult::Fail("Sync", ActorLabel(actor), Tr("$STM_Ops_SyncCallFailed")));
-            } else if (SyncDeferred(actor)) {
+            // 3D first: upstream reports "aborted because the body is not there"
+            // as an error, and calling that a failed sync would be misleading -
+            // the request is simply postponed.
+            if (SyncDeferred(actor)) {
                 Push(OpResult::Deferred("Sync", ActorLabel(actor), Tr("$STM_Ops_SyncSkipped3DNotLoaded")));
+            } else if (status != ng::Status::kOk) {
+                Push(OpResult::Fail("Sync", ActorLabel(actor), Tr("$STM_Ops_SyncCallFailed")));
             } else {
                 Push(OpResult::Ok("Sync", ActorLabel(actor), Tr("$STM_Ops_SyncRequestedClean")));
             }

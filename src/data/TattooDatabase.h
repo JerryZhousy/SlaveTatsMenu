@@ -49,6 +49,18 @@ namespace stm::data
         // leaves it off and the "a game is loaded now" call turns it on.
         void Rebuild(bool a_allowCompile = false);
 
+        // Asks for one more rebuild the next time the window is opened. Called
+        // after a game load: the kPostLoadGame rebuild can still run before
+        // SlaveTatsNG has bound this save's cache, and then the whole session
+        // sits on the JSON fallback until someone presses "rescan".
+        void RequestRefreshOnOpen();
+
+        // Consumes the request above. Rebuilds only when the catalogue is not
+        // already coming from the live API - that is the source the retry is
+        // trying to reach, and a rebuild would hand back the same list.
+        // Returns true when it actually rebuilt.
+        bool RefreshOnOpen();
+
         Source      source() const { return _source; }
         const char* SourceName() const;
         bool        Authoritative() const { return _source == Source::kSlaveTatsNgApi || _source == Source::kCacheFile; }
@@ -75,6 +87,7 @@ namespace stm::data
 
         Source                   _source = Source::kNone;
         std::vector<TattooEntry> _all;
+        bool                     _refreshOnOpen = false;
 
         // query cache
         std::string              _qArea, _qSection, _qKeyword;

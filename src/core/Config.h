@@ -31,6 +31,12 @@ namespace stm
         std::string   language = "en";
         SlotPolicy    slotPolicy = SlotPolicy::kAutoFreeSlot;
 
+        // While the window is open, finish synchronisations SlaveTatsNG dropped
+        // (3D not loaded, NiOverride lock taken). See ops/PendingSync.h: without
+        // this, one aborted sync leaves a tattoo in the ledger and off the body
+        // until the user presses "force sync".
+        bool autoFinishSync = true;
+
         // [UI]
         float windowWidth = 1280.0f;
         float windowHeight = 720.0f;

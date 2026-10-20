@@ -71,6 +71,30 @@ namespace stm::data
         SKSE::log::info("TattooDatabase: {} tattoos indexed across {} areas (source: {})", _all.size(), KnownAreas().size(), SourceName());
     }
 
+    void TattooDatabase::RequestRefreshOnOpen()
+    {
+        _refreshOnOpen = true;
+    }
+
+    bool TattooDatabase::RefreshOnOpen()
+    {
+        if (!_refreshOnOpen) {
+            return false;
+        }
+        _refreshOnOpen = false;
+
+        // Already on the live API: that is what the retry is for, and a rebuild
+        // would hand back the same list - or, if the query came back empty for
+        // a moment, ask SlaveTatsNG to walk every pack file for nothing.
+        if (_source == Source::kSlaveTatsNgApi) {
+            return false;
+        }
+
+        SKSE::log::info("TattooDatabase: first open after load, retrying the catalogue (was {} entries from {})", _all.size(), SourceName());
+        Rebuild(/*a_allowCompile=*/true);
+        return true;
+    }
+
     bool TattooDatabase::BuildFromApi(bool a_allowCompile)
     {
         auto matches = jc::AddToPool(jc::CreateArray(), kPool);

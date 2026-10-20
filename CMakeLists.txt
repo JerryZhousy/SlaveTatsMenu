@@ -60,6 +60,8 @@ set(STM_SOURCES
     src/ops/PresetOps.h
     src/ops/TattooOps.cpp
     src/ops/TattooOps.h
+    src/ops/PendingSync.cpp
+    src/ops/PendingSync.h
     src/data/TargetState.cpp
     src/data/TargetState.h
     src/obody/OBodyBridge.cpp

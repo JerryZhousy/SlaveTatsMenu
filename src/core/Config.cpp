@@ -47,6 +47,7 @@ namespace stm
         // an undefined SlotPolicy with no way to recover from inside the UI.
         const long slotPolicyRaw = ini.GetLongValue("General", "SlotPolicy", 0);
         slotPolicy = (slotPolicyRaw == 1) ? SlotPolicy::kOverwrite : SlotPolicy::kAutoFreeSlot;
+        autoFinishSync = ini.GetBoolValue("General", "AutoFinishSync", true);
 
         windowWidth = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "WindowWidth", 1280.0)), 640.0f, 3840.0f);
         windowHeight = std::clamp(static_cast<float>(ini.GetDoubleValue("UI", "WindowHeight", 720.0)), 400.0f, 2160.0f);
@@ -96,6 +97,7 @@ namespace stm
         ini.SetLongValue("General", "DefaultColor", defaultColor, nullptr, /*a_bUseHex=*/true);
         ini.SetValue("General", "Language", language.c_str());
         ini.SetLongValue("General", "SlotPolicy", static_cast<long>(slotPolicy));
+        ini.SetBoolValue("General", "AutoFinishSync", autoFinishSync);
 
         ini.SetDoubleValue("UI", "WindowWidth", windowWidth);
         ini.SetDoubleValue("UI", "WindowHeight", windowHeight);

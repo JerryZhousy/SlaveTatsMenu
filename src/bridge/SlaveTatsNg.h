@@ -27,7 +27,12 @@ namespace stm::ng
 
     Status SimpleAddTattoo(RE::Actor* a_actor, std::string_view a_section, std::string_view a_name, std::uint32_t a_color, float a_alpha, bool a_sync = true);
     Status SimpleRemoveTattoo(RE::Actor* a_actor, std::string_view a_section, std::string_view a_name, bool a_sync = true);
-    Status Synchronize(RE::Actor* a_actor);
+
+    // a_forceUpdated raises ".SlaveTats.updated" before calling upstream, which
+    // otherwise cancels the whole synchronisation the moment that flag is 0
+    // ("nothing has changed"). Use it for a user-requested force sync; internal
+    // calls after a ledger write do not need it, the write already set it.
+    Status Synchronize(RE::Actor* a_actor, bool a_forceUpdated = false);
     Status RemoveFromSlot(RE::Actor* a_actor, std::string_view a_area, int a_slot, bool a_ignoreLock);
     Status AddAndGetTattoo(RE::Actor* a_actor, std::int32_t a_template, int a_slot, std::int32_t& a_outHandle);
     Status QueryAvailable(std::int32_t a_templateHandle, std::int32_t a_matchesHandle);
