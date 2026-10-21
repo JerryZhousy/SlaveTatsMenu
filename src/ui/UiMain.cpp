@@ -385,19 +385,6 @@ namespace stm::ui
             return ImVec2(ButtonWidth(a_label, a_minWidth), ButtonHeight(a_minHeight));
         }
 
-        // Put the cursor at a_window_x on the current row, never closer than the
-        // natural same-line position, so a right-aligned button can never be
-        // placed back on top of what the row already contains.
-        void SameLineAt(float a_window_x)
-        {
-            const float spacing = ImGui::GetStyle()->ItemSpacing.x;
-            const float natural = ImGui::GetCursorPosX() + spacing;
-            if (a_window_x < natural) {
-                a_window_x = natural;
-            }
-            ImGui::SameLine(a_window_x - spacing);
-        }
-
         // A pair of buttons that belong together. Each one gets at least its
         // natural width; when both labels cannot fit on one row the second is
         // stacked underneath rather than cropped.
@@ -427,6 +414,140 @@ namespace stm::ui
             return pair;
         }
 
+        // -------------------------------------------------------------- theme
+        //
+        // One place for the colours and metrics the window uses. They used to be
+        // ImVec4 literals scattered through the panels - three different heading
+        // colours with no meaning attached to any of them - and that is a large
+        // part of why the three columns read as three unrelated tools.
+        namespace theme
+        {
+            constexpr ImU32 kAccent = IM_COL32(214, 186, 128, 255);  // warm bone, the one highlight
+            constexpr ImU32 kAccentSoft = IM_COL32(214, 186, 128, 110);
+            constexpr ImU32 kMuted = IM_COL32(140, 148, 166, 255);
+            constexpr ImU32 kHairline = IM_COL32(255, 255, 255, 28);
+            constexpr ImU32 kOk = IM_COL32(118, 198, 138, 255);
+            constexpr ImU32 kWarn = IM_COL32(228, 188, 92, 255);
+            constexpr ImU32 kFail = IM_COL32(228, 108, 108, 255);
+
+            inline ImVec4 Rgba(ImU32 a_col, float a_alpha = 1.0f)
+            {
+                ImVec4 out{};
+                ImGui::ColorConvertU32ToFloat4(&out, a_col);
+                out.w *= a_alpha;
+                return out;
+            }
+
+            inline float TextWidth(const char* a_text)
+            {
+                if (!a_text || !*a_text) {
+                    return 0.0f;
+                }
+                ImVec2 size{};
+                ImGui::CalcTextSize(&size, a_text, nullptr, true, -1.0f);
+                return size.x;
+            }
+
+            // The C-API wrappers return ImVec2 through an out parameter, and the
+            // draw-list calls are free functions in a manager namespace.
+            inline ImVec2 CursorScreenPos()
+            {
+                ImVec2 out{};
+                ImGui::GetCursorScreenPos(&out);
+                return out;
+            }
+
+            inline ImVec2 ItemRectMax()
+            {
+                ImVec2 out{};
+                ImGui::GetItemRectMax(&out);
+                return out;
+            }
+
+            inline void FillRect(ImDrawList* a_list, ImVec2 a_min, ImVec2 a_max, ImU32 a_col)
+            {
+                ImGuiMCP::ImDrawListManager::AddRectFilled(a_list, a_min, a_max, a_col, 0.0f, 0);
+            }
+
+            // Width of the label column the two toolbar rows share, so "Target"
+            // and "Area" line up. Measured, because the label is translated and
+            // the CJK font is wider than the Latin one.
+            inline float ToolbarLabelWidth()
+            {
+                return std::max(TextWidth(Tr("$STM_Target_2")), TextWidth(Tr("$STM_Area"))) + 10.0f;
+            }
+        }
+
+        // A panel heading: accent tick, title, optional right-aligned value, then
+        // a hairline. Replaces TextColored + Separator, which gave all three
+        // columns the same weight and a different colour each.
+        void SectionHeader(const char* a_title, const char* a_trailing = nullptr)
+        {
+            auto* const  dl = ImGui::GetWindowDrawList();
+            const ImVec2 origin = theme::CursorScreenPos();
+            const float  lineH = ImGui::GetTextLineHeight();
+
+            theme::FillRect(dl, ImVec2(origin.x, origin.y + lineH * 0.16f),
+                ImVec2(origin.x + 3.0f, origin.y + lineH * 0.84f), theme::kAccent);
+
+            ImGui::Dummy(ImVec2(10.0f, lineH));
+            ImGui::SameLine(10.0f, 0.0f);
+            ImGui::TextColored(theme::Rgba(theme::kAccent), "%s", a_title);
+
+            if (a_trailing && *a_trailing) {
+                const float x = ImGui::GetWindowContentRegionMax().x - theme::TextWidth(a_trailing);
+                if (x > 10.0f + theme::TextWidth(a_title) + 12.0f) {
+                    ImGui::SameLine(x);
+                    ImGui::TextColored(theme::Rgba(theme::kMuted), "%s", a_trailing);
+                }
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+        }
+
+        // A hairline with breathing room. The inspector is one long stack, and
+        // the only grouping it had was the same Separator() as everywhere else.
+        void Divider(float a_gap = 7.0f)
+        {
+            ImGui::Dummy(ImVec2(0.0f, a_gap));
+            const ImVec2 p = theme::CursorScreenPos();
+            const float  w = ImGui::GetContentRegionAvail().x;
+            theme::FillRect(ImGui::GetWindowDrawList(), p, ImVec2(p.x + w, p.y + 1.0f), theme::kHairline);
+            ImGui::Dummy(ImVec2(0.0f, a_gap));
+        }
+
+        // A list row: full-width hit area, label on the left, an optional muted
+        // value flush right (a count, a slot number). The value is dropped rather
+        // than allowed to run into the label on a narrow panel.
+        bool SelectableRow(const std::string& a_label, const char* a_trailing, bool a_selected, const char* a_id)
+        {
+            const float rowX = ImGui::GetCursorPosX();
+
+            ImGui::PushID(a_id);
+            const bool clicked = ImGui::Selectable(a_label.c_str(), a_selected);
+
+            if (a_trailing && *a_trailing) {
+                const float x = ImGui::GetWindowContentRegionMax().x - theme::TextWidth(a_trailing);
+                if (x > rowX + theme::TextWidth(a_label.c_str()) + 16.0f) {
+                    ImGui::SameLine(x);
+                    ImGui::TextColored(theme::Rgba(theme::kMuted), "%s", a_trailing);
+                }
+            }
+
+            ImGui::PopID();
+            return clicked;
+        }
+
+        // An empty state: muted, wrapped, and never mistaken for a broken panel.
+        void EmptyHint(const char* a_text)
+        {
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, theme::Rgba(theme::kMuted, 0.85f));
+            ImGui::TextWrapped("%s", a_text);
+            ImGui::PopStyleColor();
+        }
+
         // ----------------------------------------------------------- panels
 
         void DrawTargetRow()
@@ -434,12 +555,25 @@ namespace stm::ui
             auto& state = UiState::Get();
             auto& target = data::TargetState::Get();
 
-            ImGui::Text("%s", Tr("$STM_Target_2"));
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "[ %s ]", target.DisplayName().c_str());
+            const float labelW = theme::ToolbarLabelWidth();
+            const float spacing = ImGui::GetStyle()->ItemSpacing.x;
 
-            ImGui::SameLine();
-            if (ImGui::SmallButton(Tr("$STM_PickCrosshairNpc"))) {
+            const char*  pickLabel = Tr("$STM_PickCrosshairNpc");
+            const char*  resetLabel = Tr("$STM_ResetToPlayer");
+            const ImVec2 pickSize = ButtonSize(pickLabel);
+            const ImVec2 resetSize = ButtonSize(resetLabel);
+
+            // Who is being edited, and the two things you do to it. The label
+            // column is shared with the area row below so the two read as one
+            // toolbar instead of two unrelated lines.
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(theme::Rgba(theme::kMuted), "%s", Tr("$STM_Target_2"));
+            ImGui::SameLine(labelW);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(theme::Rgba(theme::kAccent), "%s", target.DisplayName().c_str());
+
+            ImGui::SameLine(0.0f, spacing * 2.0f);
+            if (ImGui::Button(pickLabel, pickSize)) {
                 if (target.PickFromCrosshair()) {
                     state.SetStatus(true, std::string(Tr("$STM_Target")) + target.DisplayName(), NowSeconds());
                 } else {
@@ -450,32 +584,38 @@ namespace stm::ui
             }
 
             ImGui::SameLine();
-            if (ImGui::SmallButton(Tr("$STM_ResetToPlayer"))) {
+            if (ImGui::Button(resetLabel, resetSize)) {
                 target.ResetToPlayer();
                 state.SetStatus(true, Tr("$STM_TargetResetToThe"), NowSeconds());
                 data::SlotSnapshot::Get().Invalidate();
                 obody::RequestResolve();
             }
 
-            // The two library buttons sit at the right edge of the row. Their
-            // labels are measured rather than guessed: "重新扫描纹身库" needs far
-            // more than the 144 px the old fixed box offered.
+            // Library-wide actions live at the far right, behind a rule. They used
+            // to sit 8 px from "reset to player", which implied they belonged to
+            // the target rather than to the catalogue.
             const char*  rescanLabel = Tr("$STM_Btn_Rescan");
             const char*  syncLabel = Tr("$STM_Btn_ForceSync");
-            const ImVec2 rescanSize = ButtonSize(rescanLabel, 144.0f);
-            const ImVec2 syncSize = ButtonSize(syncLabel, 144.0f);
-            const float  spacing = ImGui::GetStyle()->ItemSpacing.x;
+            const ImVec2 rescanSize = ButtonSize(rescanLabel);
+            const ImVec2 syncSize = ButtonSize(syncLabel);
 
+            const float groupW = rescanSize.x + spacing + syncSize.x;
             const float rowRight = ImGui::GetWindowContentRegionMax().x;
-            const float buttonsWidth = rescanSize.x + spacing + syncSize.x;
-            if (rowRight - buttonsWidth > ImGui::GetCursorPosX() + spacing) {
-                SameLineAt(rowRight - buttonsWidth);
+            const float usedRight = theme::ItemRectMax().x - ImGui::GetWindowPos().x;
+
+            if (usedRight + spacing * 2.0f + groupW <= rowRight) {
+                ImGui::SameLine(rowRight - groupW);
             } else {
-                // A long target name eats the row: drop to the next line and
-                // still keep the pair at the right edge instead of cropping it.
+                // A long target name eats the row: drop to the next line and keep
+                // the pair at the right edge instead of cropping it.
                 ImGui::NewLine();
-                ImGui::SetCursorPosX(std::max(0.0f, rowRight - buttonsWidth));
+                ImGui::SetCursorPosX(std::max(0.0f, rowRight - groupW));
             }
+
+            const ImVec2 groupPos = theme::CursorScreenPos();
+            const float  ruleX = groupPos.x - spacing * 0.6f;
+            theme::FillRect(ImGui::GetWindowDrawList(), ImVec2(ruleX, groupPos.y + 2.0f),
+                ImVec2(ruleX + 1.0f, groupPos.y + ImGui::GetFrameHeight() - 2.0f), theme::kHairline);
 
             if (ImGui::Button(rescanLabel, rescanSize)) {
                 auto& db = data::TattooDatabase::Get();
@@ -495,21 +635,22 @@ namespace stm::ui
         {
             auto& state = UiState::Get();
 
-            ImGui::Text("%s", Tr("$STM_Area"));
-            ImGui::SameLine();
+            static const char* kAreaKeys[] = {
+                "$STM_Area_All",
+                "$STM_Area_Body",
+                "$STM_Area_Face",
+                "$STM_Area_Hands",
+                "$STM_Area_Feet"
+            };
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(theme::Rgba(theme::kMuted), "%s", Tr("$STM_Area"));
+            ImGui::SameLine(theme::ToolbarLabelWidth());
 
             for (int i = 0; i < 5; ++i) {
                 if (i > 0) {
                     ImGui::SameLine();
                 }
-
-                static const char* kAreaKeys[] = {
-                    "$STM_Area_All",
-                    "$STM_Area_Body",
-                    "$STM_Area_Face",
-                    "$STM_Area_Hands",
-                    "$STM_Area_Feet"
-                };
 
                 if (ImGui::RadioButton(Tr(kAreaKeys[i]), state.areaIndex == i)) {
                     state.areaIndex = i;
@@ -528,31 +669,39 @@ namespace stm::ui
             auto& db = data::TattooDatabase::Get();
 
             ImGui::BeginChild("section_panel", ImVec2(a_width, a_height), true);
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", Tr("$STM_Heading_Mods"));
-            ImGui::Separator();
 
-            if (!state.sectionChosen) {
-                ImGui::TextDisabled("%s", Tr("$STM_Hint_PickMod"));
+            const auto& sections = db.QuerySections(CurrentArea(), state.modSearch);
+
+            std::size_t total = 0;
+            for (const auto& section : sections) {
+                total += section.count;
             }
 
-            // The clear button is as wide as its (large) glyph needs; the search
-            // box takes whatever is left so the two never overlap.
-            const float clearModWidth = ButtonWidth("x##clear_mod", 24.0f);
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - clearModWidth - ImGui::GetStyle()->ItemSpacing.x - 2.0f);
+            const std::string count = std::to_string(sections.size());
+            SectionHeader(Tr("$STM_Heading_Mods"), count.c_str());
+
+            if (!state.sectionChosen) {
+                EmptyHint(Tr("$STM_Hint_PickMod"));
+            }
+
+            // The clear button is as wide as its (large) glyph needs, and exactly
+            // as tall as the input beside it; the input takes whatever is left.
+            const float clearWidth = ButtonWidth("x##clear_mod", 24.0f);
+            const float spacing = ImGui::GetStyle()->ItemSpacing.x;
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - clearWidth - spacing - 2.0f);
             ImGui::InputTextWithHint("##mod_search", Tr("$STM_SearchMods"), state.modSearch, sizeof(state.modSearch));
             ImGui::PopItemWidth();
             ImGui::SameLine();
-            if (ImGui::Button("x##clear_mod", ImVec2(clearModWidth, ButtonHeight()))) {
+            if (ImGui::Button("x##clear_mod", ImVec2(clearWidth, ImGui::GetFrameHeight()))) {
                 state.modSearch[0] = '\0';
             }
             ImGui::Spacing();
 
-            const auto& sections = db.QuerySections(CurrentArea(), state.modSearch);
-
             // Picking an entry selects it; clicking the current pick again
             // deselects it and takes the tattoo list away with it.
-            const bool allSelected = state.sectionChosen && state.sectionFilter.empty();
-            if (ImGui::Selectable(Tr("$STM_Filter_AllMods"), allSelected)) {
+            const bool  allSelected = state.sectionChosen && state.sectionFilter.empty();
+            const std::string allCount = std::to_string(total);
+            if (SelectableRow(Tr("$STM_Filter_AllMods"), allCount.c_str(), allSelected, "all_mods")) {
                 state.sectionChosen = !allSelected;
                 state.sectionFilter.clear();
                 state.hasSelection = false;
@@ -560,21 +709,28 @@ namespace stm::ui
             }
 
             ListClipper clipper(static_cast<int>(sections.size()));
-            int start = 0;
-            int end = 0;
+            int         start = 0;
+            int         end = 0;
             while (clipper.Step(start, end)) {
                 for (int i = start; i < end; ++i) {
                     const auto& section = sections[static_cast<std::size_t>(i)];
-                    const std::string label = section.name + " (" + std::to_string(section.count) + ")";
-                    const bool selected = state.sectionChosen && state.sectionFilter == section.name;
+                    const bool  selected = state.sectionChosen && state.sectionFilter == section.name;
 
-                    if (ImGui::Selectable((label + "##sec_" + section.name).c_str(), selected)) {
+                    // The count used to be part of the label ("Rush (42)"), which
+                    // made every row read as one long string; flush right it is
+                    // a column you can scan down instead.
+                    const std::string countText = std::to_string(section.count);
+                    if (SelectableRow(section.name, countText.c_str(), selected, section.name.c_str())) {
                         state.sectionChosen = !selected;
                         state.sectionFilter = selected ? std::string() : section.name;
                         state.hasSelection = false;
                         UpdatePreview("");
                     }
                 }
+            }
+
+            if (sections.empty() && state.modSearch[0] != '\0') {
+                EmptyHint(Tr("$STM_NoTattoosMatchThe"));
             }
 
             ImGui::EndChild();
@@ -589,22 +745,27 @@ namespace stm::ui
 
             const auto& tattoos = db.Query(CurrentArea(), state.sectionFilter, state.tattooSearch);
 
-            const std::string title = state.sectionFilter.empty()
-                ? std::string(Tr("$STM_Heading_Tattoos")) + " (" + std::to_string(tattoos.size()) + ")"
-                : std::string("2. [") + state.sectionFilter + "] (" + std::to_string(tattoos.size()) + ")";
+            const std::string count = std::to_string(tattoos.size());
+            SectionHeader(Tr("$STM_Heading_Tattoos"), count.c_str());
 
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.7f, 1.0f), "%s", title.c_str());
-            ImGui::Separator();
+            // Which mod the list belongs to, as a subtitle rather than baked into
+            // the heading: the heading is fixed chrome, this line changes.
+            if (!state.sectionFilter.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, theme::Rgba(theme::kMuted));
+                ImGui::Text("%s: %s", Tr("$STM_Mod"), state.sectionFilter.c_str());
+                ImGui::PopStyleColor();
+            }
 
-            const float clearTatWidth = ButtonWidth("x##clear_tat", 24.0f);
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - clearTatWidth - ImGui::GetStyle()->ItemSpacing.x - 2.0f);
+            const float clearWidth = ButtonWidth("x##clear_tat", 24.0f);
+            const float spacing = ImGui::GetStyle()->ItemSpacing.x;
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - clearWidth - spacing - 2.0f);
             if (ImGui::InputTextWithHint("##tat_search", Tr("$STM_SearchTattoos"), state.tattooSearch, sizeof(state.tattooSearch))) {
                 state.hasSelection = false;
                 UpdatePreview("");
             }
             ImGui::PopItemWidth();
             ImGui::SameLine();
-            if (ImGui::Button("x##clear_tat", ImVec2(clearTatWidth, ButtonHeight()))) {
+            if (ImGui::Button("x##clear_tat", ImVec2(clearWidth, ImGui::GetFrameHeight()))) {
                 state.tattooSearch[0] = '\0';
                 state.hasSelection = false;
                 UpdatePreview("");
@@ -612,25 +773,44 @@ namespace stm::ui
             ImGui::Spacing();
 
             if (tattoos.empty()) {
-                ImGui::TextDisabled("%s", Tr("$STM_NoTattoosMatchThe"));
+                EmptyHint(Tr("$STM_NoTattoosMatchThe"));
             } else {
+                // The name leads. The area is only worth repeating when the area
+                // filter is "All", and the mod only when no mod is picked - the
+                // old label always carried both as bracketed prefixes, so every
+                // row started with the same two words.
+                const bool showArea = state.areaIndex == 0;
+                const bool showSection = state.sectionFilter.empty();
+
                 ListClipper clipper(static_cast<int>(tattoos.size()));
-                int start = 0;
-                int end = 0;
+                int         start = 0;
+                int         end = 0;
                 while (clipper.Step(start, end)) {
                     for (int i = start; i < end; ++i) {
                         const auto& item = tattoos[static_cast<std::size_t>(i)];
 
-                        std::string label = "[" + item.area + "] ";
-                        if (state.sectionFilter.empty()) {
-                            label += "[" + item.section + "] ";
+                        std::string label = item.name;
+                        if (showSection && !item.section.empty()) {
+                            label += "  |  " + item.section;
                         }
-                        label += item.name;
+                        if (showArea) {
+                            label += "  |  " + item.area;
+                        }
 
                         const bool selected = state.hasSelection && state.selected.section == item.section && state.selected.name == item.name;
 
-                        if (ImGui::Selectable((label + "##tat_" + item.section + "_" + item.name).c_str(), selected)) {
+                        if (SelectableRow(label, nullptr, selected, (item.section + "_" + item.name).c_str())) {
                             SeedEditorFrom(item);
+                        }
+
+                        if (ImGui::IsItemHovered()) {
+                            std::string tip = item.name;
+                            tip += "\n" + std::string(Tr("$STM_Mod")) + ": " + item.section;
+                            tip += "   " + std::string(Tr("$STM_AreaLower")) + ": " + item.area;
+                            if (!item.texture.empty()) {
+                                tip += "\n" + std::string(Tr("$STM_Texture")) + ": " + item.texture;
+                            }
+                            ImGui::SetTooltip("%s", tip.c_str());
                         }
                     }
                 }
@@ -821,7 +1001,7 @@ namespace stm::ui
 
                 if (bigSrv) {
                     ImGui::Image(reinterpret_cast<ImGuiMCP::ImTextureID>(bigSrv), ImVec2(availW, availH),
-                        ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
+                        ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), theme::Rgba(theme::kAccentSoft));
 
                     static bool s_bigDraggingLeft = false;
                     static bool s_bigDraggingRight = false;
@@ -903,17 +1083,24 @@ namespace stm::ui
             auto& db = data::TattooDatabase::Get();
 
             ImGui::BeginChild("inspector_panel", ImVec2(a_width, a_height), true);
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s", Tr("$STM_Heading_Properties"));
-            ImGui::Separator();
+            SectionHeader(Tr("$STM_Heading_Properties"));
 
             if (state.hasSelection) {
-                ImGui::Text("%s: %s", Tr("$STM_TattooLower"), state.selected.name.c_str());
-                ImGui::Text("%s: %s", Tr("$STM_ModLower"), state.selected.section.c_str());
-                ImGui::Text("%s: %s", Tr("$STM_AreaLower"), state.selected.area.c_str());
+                // The name is the headline; mod, area and texture are supporting
+                // detail. They used to be three equally weighted "label: value"
+                // lines, so nothing in the block said what you were looking at.
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(theme::Rgba(theme::kMuted), "%s:", Tr("$STM_TattooLower"));
+                ImGui::SameLine();
+                ImGui::TextColored(theme::Rgba(theme::kAccent), "%s", state.selected.name.c_str());
 
+                ImGui::PushStyleColor(ImGuiCol_Text, theme::Rgba(theme::kMuted));
+                ImGui::Text("%s: %s   |   %s: %s", Tr("$STM_ModLower"), state.selected.section.c_str(),
+                    Tr("$STM_AreaLower"), state.selected.area.c_str());
                 if (!state.selected.texture.empty()) {
-                    ImGui::TextDisabled("%s: %s", Tr("$STM_Texture"), state.selected.texture.c_str());
+                    ImGui::TextWrapped("%s: %s", Tr("$STM_Texture"), state.selected.texture.c_str());
                 }
+                ImGui::PopStyleColor();
 
                 if (state.previewTexture) {
                     ImGui::Spacing();
@@ -989,7 +1176,7 @@ namespace stm::ui
 
                         if (srv) {
                             ImGui::Image(reinterpret_cast<ImGuiMCP::ImTextureID>(srv), ImVec2(pWidth, pHeight),
-                                ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
+                                ImVec2(0, 0), ImVec2(1, 1), ImVec4(1, 1, 1, 1), theme::Rgba(theme::kAccentSoft));
 
                             static bool s_isDraggingLeft = false;
                             static bool s_isDraggingRight = false;
@@ -1091,7 +1278,11 @@ namespace stm::ui
                     }
                 }
 
-                ImGui::Spacing();
+                // Appearance group. The inspector is one long stack of controls;
+                // a hairline with real spacing is what separates "what it looks
+                // like" from "where it goes" from "what is already on the body".
+                Divider();
+
                 ImGui::ColorEdit3(Tr("$STM_Colour"), state.color);
 
                 ImGui::Text("%s:", Tr("$STM_QuickColours"));
@@ -1135,6 +1326,10 @@ namespace stm::ui
                     }
                     ImGui::ColorEdit3(Tr("$STM_GlowColor", "Glow Color##glow_col"), state.glowColor);
                 }
+
+                // Placement group: which slot the ink lands in, then the two
+                // actions that commit it.
+                Divider();
 
                 // Slot picker. The chosen slot is clamped against the area the
                 // selected tattoo actually belongs to, so a stale value from
@@ -1208,14 +1403,12 @@ namespace stm::ui
                     ops::Remove(data::TargetState::Get().Handle(), state.selected.section, state.selected.name);
                 }
             } else {
-                ImGui::TextDisabled("%s", state.sectionChosen
+                EmptyHint(state.sectionChosen
                     ? Tr("$STM_PickATattooIn")
                     : Tr("$STM_Hint_SelectModFirst"));
             }
 
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
+            Divider(9.0f);
 
             // Computed once: CurrentArea() returns a std::string by value and
             // this used to call it twice on the same line.
@@ -1224,7 +1417,10 @@ namespace stm::ui
                 area = "Body";
             }
 
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s (%s):", Tr("$STM_SlotStatus"), area.c_str());
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(theme::Rgba(theme::kMuted), "%s", Tr("$STM_SlotStatus"));
+            ImGui::SameLine();
+            ImGui::TextColored(theme::Rgba(theme::kAccent), "%s", area.c_str());
 
             data::SlotSnapshot::Get().Request(data::TargetState::Get().Handle(), area);
             DrawSlotList(area);
@@ -1412,25 +1608,76 @@ namespace stm::ui
             }
         }
 
-        void DrawStatusLine()
+        // The bottom strip: the last operation on the left, the catalogue
+        // metadata on the right. The metadata used to be the very first line of
+        // the window, which put build diagnostics where the eye lands first and
+        // pushed the actual workflow down a row.
+        void DrawStatusBar()
         {
             auto& state = UiState::Get();
 
-            if (state.statusText.empty()) {
-                return;
-            }
-
             constexpr double kHoldSeconds = 15.0;
-            if ((NowSeconds() - state.statusAt) > kHoldSeconds) {
-                return;
+            constexpr double kFadeSeconds = 3.0;
+
+            const double age = NowSeconds() - state.statusAt;
+            const bool   hasStatus = !state.statusText.empty() && age <= kHoldSeconds;
+
+            // Fade out instead of vanishing: the line used to disappear between
+            // one frame and the next.
+            float alpha = 0.0f;
+            if (hasStatus) {
+                alpha = (age <= kHoldSeconds - kFadeSeconds)
+                    ? 1.0f
+                    : static_cast<float>((kHoldSeconds - age) / kFadeSeconds);
             }
 
             ImGui::Separator();
-            const char*  tag = !state.statusOk ? Tr("$STM_Failed") : (state.statusDeferred ? Tr("$STM_Deferred") : Tr("$STM_Ok"));
-            const ImVec4 colour = !state.statusOk      ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
-                                  : state.statusDeferred ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f)
-                                                         : ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
-            ImGui::TextColored(colour, "[%s] %s", tag, state.statusText.c_str());
+
+            const ImVec2 origin = theme::CursorScreenPos();
+            const float  lineH = ImGui::GetTextLineHeight();
+            float        usedRight = 0.0f;
+
+            if (hasStatus) {
+                // Colour bar plus the word: the state is readable at a glance and
+                // still explicit for anyone who cannot rely on the colour.
+                const ImU32 bar = !state.statusOk ? theme::kFail : (state.statusDeferred ? theme::kWarn : theme::kOk);
+                theme::FillRect(ImGui::GetWindowDrawList(), ImVec2(origin.x, origin.y + 1.0f),
+                    ImVec2(origin.x + 3.0f, origin.y + lineH - 1.0f), bar);
+
+                const char* tag = !state.statusOk ? Tr("$STM_Failed") : (state.statusDeferred ? Tr("$STM_Deferred") : Tr("$STM_Ok"));
+
+                ImGui::Dummy(ImVec2(10.0f, lineH));
+                ImGui::SameLine(10.0f, 0.0f);
+                ImGui::TextColored(theme::Rgba(bar, alpha), "%s", tag);
+
+                ImGui::SameLine(0.0f, 10.0f);
+                ImGui::TextColored(ImVec4(0.92f, 0.93f, 0.95f, alpha), "%s", state.statusText.c_str());
+
+                usedRight = theme::ItemRectMax().x - ImGui::GetWindowPos().x;
+            }
+
+            auto& db = data::TattooDatabase::Get();
+
+            char meta[192];
+            std::snprintf(meta, sizeof(meta), "%s %zu (%s)   %s: %s   %s: %d",
+                Tr("$STM_Library"),
+                db.Size(),
+                db.SourceName(),
+                Tr("$STM_Jcontainers"),
+                jc::Ready() ? Tr("$STM_Status_Ok") : Tr("$STM_Status_Unavailable"),
+                Tr("$STM_RegisteredActors"),
+                KnownTargetCountCached());
+
+            const float metaW = theme::TextWidth(meta);
+            const float right = ImGui::GetWindowContentRegionMax().x;
+            if (right - metaW > usedRight + 24.0f) {
+                if (hasStatus) {
+                    ImGui::SameLine(right - metaW);
+                } else {
+                    ImGui::SetCursorPosX(std::max(0.0f, right - metaW));
+                }
+                ImGui::TextColored(theme::Rgba(theme::kMuted, hasStatus ? alpha : 0.75f), "%s", meta);
+            }
         }
 
         void DrawMain()
@@ -1441,24 +1688,14 @@ namespace stm::ui
 
             FontScaleScope fontScope(Config::Get().fontScale);
 
-            auto& db = data::TattooDatabase::Get();
             auto& state = UiState::Get();
 
             if (!ng::Ready()) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, theme::Rgba(theme::kFail));
                 ImGui::Text("%s", Tr("$STM_WarningSlavetatsngInterfaceNot"));
                 ImGui::PopStyleColor();
                 ImGui::Separator();
             }
-
-            ImGui::TextDisabled("%s: %zu (%s)   %s: %s   %s: %d",
-                Tr("$STM_Library"),
-                db.Size(),
-                db.SourceName(),
-                Tr("$STM_Jcontainers"),
-                jc::Ready() ? Tr("$STM_Status_Ok") : Tr("$STM_Status_Unavailable"),
-                Tr("$STM_RegisteredActors"),
-                KnownTargetCountCached());
 
             DrawTargetRow();
             DrawAreaRow();
@@ -1469,7 +1706,11 @@ namespace stm::ui
             // three-column layout and the mod list absorbs the freed space.
             const float available = ImGui::GetContentRegionAvail().x;
             const float availY = ImGui::GetContentRegionAvail().y;
-            const float panelHeight = std::max(380.0f, availY - 35.0f);
+
+            // Reserve the status bar by measured height, not by a constant: at
+            // font scale 1.5 a line is ~40 px and the old fixed 35 px clipped it.
+            const float statusBarHeight = ImGui::GetTextLineHeightWithSpacing() + 8.0f;
+            const float panelHeight = std::max(380.0f, availY - statusBarHeight);
 
             // Three columns need 240 + 280 + 380 + gaps. On a narrower window the
             // tattoo list gives up width first (down to 180) - the old fixed 400 px
@@ -1500,7 +1741,7 @@ namespace stm::ui
             }
             ImGui::SameLine();
             DrawInspector(col3, panelHeight);
-            DrawStatusLine();
+            DrawStatusBar();
         }
         ImGuiKey DirectInputToImGuiKey(std::uint32_t a_dik)
         {
