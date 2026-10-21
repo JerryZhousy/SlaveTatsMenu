@@ -518,6 +518,19 @@ namespace stm::ui
                     data::SlotSnapshot::Get().Invalidate();
                     // 3D 预览的部位直接跟随这一行的选择(「全部」= 全身), 不再有第二套部位开关
                     render::MannequinRenderer::Get().SetCurrentPart(AreaToPreviewPart(kAreaIds[i]));
+
+                    // The picked mod may ship nothing for the new area. Keeping it
+                    // would leave an empty list under a mod the left panel no
+                    // longer highlights, with nothing on screen saying why.
+                    if (state.sectionChosen && !state.sectionFilter.empty()) {
+                        const auto& sections = data::TattooDatabase::Get().QuerySections(CurrentArea(), "");
+                        const bool  stillThere = std::any_of(sections.begin(), sections.end(),
+                            [&state](const data::SectionInfo& a_section) { return a_section.name == state.sectionFilter; });
+                        if (!stillThere) {
+                            state.sectionChosen = false;
+                            state.sectionFilter.clear();
+                        }
+                    }
                 }
             }
         }
@@ -528,6 +541,18 @@ namespace stm::ui
             auto& db = data::TattooDatabase::Get();
 
             ImGui::BeginChild("section_panel", ImVec2(a_width, a_height), true);
+
+            // Switching area replaces the whole list. Keeping the old scroll
+            // offset drops the user into the middle of a list they never saw.
+            {
+                static std::string s_lastArea;
+                const std::string  area = CurrentArea();
+                if (s_lastArea != area) {
+                    s_lastArea = area;
+                    ImGui::SetScrollY(0.0f);
+                }
+            }
+
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", Tr("$STM_Heading_Mods"));
             ImGui::Separator();
 
@@ -586,6 +611,21 @@ namespace stm::ui
             auto& db = data::TattooDatabase::Get();
 
             ImGui::BeginChild("tattoo_panel", ImVec2(a_width, a_height), true);
+
+            // Same for the tattoo list: a new filter is a new list, so it starts
+            // at the top instead of wherever the previous one was scrolled to.
+            {
+                static std::string s_lastArea;
+                static std::string s_lastSection;
+                static std::string s_lastSearch;
+                const std::string  area = CurrentArea();
+                if (s_lastArea != area || s_lastSection != state.sectionFilter || s_lastSearch != state.tattooSearch) {
+                    s_lastArea = area;
+                    s_lastSection = state.sectionFilter;
+                    s_lastSearch = state.tattooSearch;
+                    ImGui::SetScrollY(0.0f);
+                }
+            }
 
             const auto& tattoos = db.Query(CurrentArea(), state.sectionFilter, state.tattooSearch);
 
@@ -1144,9 +1184,30 @@ namespace stm::ui
                     state.targetSlot = -1;
                 }
 
-                const std::string comboLabel = state.targetSlot < 0
+                // One snapshot for both the label and the combo. It also answers
+                // "which slot will auto-allocation pick", so the label can say it
+                // before the ink is committed instead of after.
+                const auto snap = data::SlotSnapshot::Get().Copy();
+                const bool snapUsable = snap.valid && snap.area == state.selected.area;
+
+                int firstFree = -1;
+                if (state.targetSlot < 0 && snapUsable) {
+                    for (int slot = 0; slot < maxSlots; ++slot) {
+                        const bool occupied = std::any_of(snap.slots.begin(), snap.slots.end(),
+                            [slot](const data::SlotInfo& a_info) { return a_info.slot == slot && a_info.occupied; });
+                        if (!occupied) {
+                            firstFree = slot;
+                            break;
+                        }
+                    }
+                }
+
+                std::string comboLabel = state.targetSlot < 0
                     ? std::string(Tr("$STM_FirstFreeSlot"))
                     : std::string(Tr("$STM_Slot")) + std::to_string(state.targetSlot);
+                if (firstFree >= 0) {
+                    comboLabel += " (#" + std::to_string(firstFree) + ")";
+                }
 
                 ImGui::Text("%s:", Tr("$STM_TargetSlot"));
                 ImGui::SameLine();
@@ -1162,10 +1223,9 @@ namespace stm::ui
                     if (ImGui::Selectable(Tr("$STM_FirstFreeSlot_2"), state.targetSlot < 0)) {
                         state.targetSlot = -1;
                     }
-                    const auto snap = data::SlotSnapshot::Get().Copy();
                     for (int slot = 0; slot < maxSlots; ++slot) {
                         std::string statusText = Tr("$STM_Slot_Empty");
-                        if (snap.valid && snap.area == state.selected.area) {
+                        if (snapUsable) {
                             for (const auto& s : snap.slots) {
                                 if (s.slot == slot && s.occupied) {
                                     statusText = s.external ? Tr("$STM_Slot_External") : ("[" + s.name + "]");
@@ -1242,7 +1302,30 @@ namespace stm::ui
                 ImGui::SameLine();
             }
             if (ImGui::Button(clearAllLabel, clears.second)) {
-                ops::ClearAll(data::TargetState::Get().Handle());
+                ImGui::OpenPopup("##stm_clear_all_confirm");
+            }
+
+            // "Clear everything" wipes the actor in one click and there is no
+            // undo. The preset list already asks before destroying a file; this
+            // is the same rule for the one action that can lose a whole set.
+            if (ImGui::BeginPopupModal("##stm_clear_all_confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted(Tr("$STM_ConfirmClearAll"));
+                ImGui::TextDisabled("%s", data::TargetState::Get().DisplayName().c_str());
+                ImGui::Spacing();
+
+                if (ImGui::Button(clearAllLabel, ButtonSize(clearAllLabel, 140.0f, 26.0f))) {
+                    ops::ClearAll(data::TargetState::Get().Handle());
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                const char* cancelLabel = Tr("$STM_Common_Cancel");
+                if (ImGui::Button(cancelLabel, ButtonSize(cancelLabel, 120.0f, 26.0f))) {
+                    ImGui::CloseCurrentPopup();
+                }
+                // Cancel is the default, so Enter on a destructive prompt does
+                // nothing rather than wiping the actor.
+                ImGui::SetItemDefaultFocus();
+                ImGui::EndPopup();
             }
 
             ImGui::Spacing();
@@ -1469,7 +1552,11 @@ namespace stm::ui
             // three-column layout and the mod list absorbs the freed space.
             const float available = ImGui::GetContentRegionAvail().x;
             const float availY = ImGui::GetContentRegionAvail().y;
-            const float panelHeight = std::max(380.0f, availY - 35.0f);
+
+            // Reserve the status bar by measured height, not by a constant: at
+            // font scale 1.5 a line is ~40 px and the fixed 35 px clipped it.
+            const float statusBarHeight = ImGui::GetTextLineHeightWithSpacing() + 8.0f;
+            const float panelHeight = std::max(380.0f, availY - statusBarHeight);
 
             // Three columns need 240 + 280 + 380 + gaps. On a narrower window the
             // tattoo list gives up width first (down to 180) - the old fixed 400 px
