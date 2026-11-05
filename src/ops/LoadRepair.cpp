@@ -19,9 +19,10 @@ namespace stm::ops::loadrepair
 
         // OBody re-applies its presets a few seconds after a load - measured at
         // ~13 s on a real install - and that is the step that can take the
-        // overlays skee just restored back off the body. A single pass would
-        // race it, so the schedule samples twice: once after the body has
-        // settled, once after OBody has had its turn.
+        // overlays skee just restored back off the body. The first pass runs
+        // before it, the second after it, so a body that was wiped again by then
+        // is repaired too. Two passes also bound the damage of a false positive
+        // to two syncs per load.
         constexpr std::array<Clock::duration, 2> kPassOffsets{
             std::chrono::seconds(10),
             std::chrono::seconds(30),
@@ -49,14 +50,13 @@ namespace stm::ops::loadrepair
         // per task: a character can carry 38 slots across four areas, and doing
         // a whole cell in one frame would be a visible hitch for a repair that
         // has no deadline.
-        std::mutex                     g_passMutex;
-        std::vector<RE::ActorHandle>   g_passActors;
-        std::unordered_set<RE::FormID> g_gaveUp;  // sync did not visibly fix it
-        std::size_t                    g_passIndex = 0;
-        std::uint64_t                  g_passGeneration = 0;
-        int                            g_passNumber = 0;
-        int                            g_passChecked = 0;
-        int                            g_passRepaired = 0;
+        std::mutex                   g_passMutex;
+        std::vector<RE::ActorHandle> g_passActors;
+        std::size_t                  g_passIndex = 0;
+        std::uint64_t                g_passGeneration = 0;
+        int                          g_passNumber = 0;
+        int                          g_passChecked = 0;
+        int                          g_passRepaired = 0;
 
         void StepPass();
 
@@ -85,11 +85,18 @@ namespace stm::ops::loadrepair
             std::vector<RE::ActorHandle> actors;
             actors.push_back(player->GetHandle());
 
+            // ProcessLists holds every actor the game has ever handed an AI
+            // process, which on a modded install is thousands of handles that
+            // resolve to nothing. Only the ones with 3D can have overlays to
+            // look at, so filter here rather than in the walk.
+            int seen = 1;
+
             if (auto* lists = RE::ProcessLists::GetSingleton()) {
-                const auto collect = [&actors, player](const RE::BSTArray<RE::ActorHandle>& a_handles) {
+                const auto collect = [&actors, player, &seen](const RE::BSTArray<RE::ActorHandle>& a_handles) {
                     for (const auto& handle : a_handles) {
+                        ++seen;
                         const auto ptr = handle.get();  // NiPointer, not a raw Actor*
-                        if (!ptr || ptr.get() == player) {
+                        if (!ptr || ptr.get() == player || !ptr->Is3DLoaded()) {
                             continue;
                         }
                         actors.push_back(handle);
@@ -111,7 +118,8 @@ namespace stm::ops::loadrepair
                 g_passRepaired = 0;
             }
 
-            SKSE::log::info("LoadRepair: pass {} checking {} actor(s) with 3D", a_passNumber + 1, count);
+            SKSE::log::info("LoadRepair: pass {} checking {} actor(s) with 3D ({} handles scanned)",
+                a_passNumber + 1, count, seen);
             PostToGameThread(StepPass);
         }
 
@@ -128,8 +136,7 @@ namespace stm::ops::loadrepair
         {
             int         missing = 0;
             int         recorded = 0;
-            int         worstArea = 0;
-            std::string worstDetail;
+            std::string detail;
 
             for (const char* area : kAreas) {
                 const int slots = ng::MaxSlots(area);
@@ -137,31 +144,24 @@ namespace stm::ops::loadrepair
                     continue;
                 }
 
-                int areaMissing = 0;
-                int areaRecorded = 0;
-
                 for (int slot = 0; slot < slots; ++slot) {
                     if (ng::GetAppliedInSlot(a_actor, area, slot) <= 0) {
                         continue;
                     }
-                    ++areaRecorded;
-                    if (diag::overlay::LooksLikeBlankSlot(diag::overlay::ReadRenderState(a_root, area, slot))) {
-                        ++areaMissing;
+                    ++recorded;
+                    if (!diag::overlay::LooksLikeBlankSlot(diag::overlay::ReadRenderState(a_root, area, slot))) {
+                        continue;
                     }
-                }
-
-                recorded += areaRecorded;
-                missing += areaMissing;
-
-                if (areaMissing > worstArea) {
-                    worstArea = areaMissing;
-                    worstDetail = std::string(area) + " " + std::to_string(areaMissing) + "/" +
-                                  std::to_string(areaRecorded) + " slot(s) empty";
+                    ++missing;
+                    if (!detail.empty()) {
+                        detail += ", ";
+                    }
+                    detail += std::string(area) + " [" + std::to_string(slot) + "]";
                 }
             }
 
             if (missing > 0) {
-                a_out = std::to_string(missing) + " of " + std::to_string(recorded) + " recorded slot(s) empty (" + worstDetail + ")";
+                a_out = std::to_string(missing) + " of " + std::to_string(recorded) + " recorded slot(s) empty: " + detail;
             }
             return missing;
         }
@@ -183,17 +183,9 @@ namespace stm::ops::loadrepair
                 return false;
             }
 
-            const auto formID = a_actor->GetFormID();
-            {
-                std::scoped_lock lock(g_passMutex);
-                if (g_gaveUp.contains(formID)) {
-                    return false;
-                }
-            }
-
             const char* name = a_actor->GetName();
             SKSE::log::warn("LoadRepair: '{}' ({:08X}) lost overlays the ledger still lists ({}), resyncing",
-                name && name[0] != '\0' ? name : "<unnamed>", formID, detail);
+                name && name[0] != '\0' ? name : "<unnamed>", a_actor->GetFormID(), detail);
 
             // Forced on purpose: synchronize_tattoos() cancels while
             // ".SlaveTats.updated" is 0, and the whole point here is that the
@@ -207,20 +199,12 @@ namespace stm::ops::loadrepair
                 return false;
             }
 
-            // Read the body back. A slot that is still empty right after a sync
-            // that reported success is not a lost overlay - it is this check
-            // disagreeing with how that body names its slots, and retrying would
-            // clear the slot range again on every pass for nothing.
-            auto* after = a_actor->Is3DLoaded() ? a_actor->Get3D() : nullptr;
-            std::string still;
-            if (after && MissingSlots(a_actor, after, still) > 0) {
-                SKSE::log::warn("LoadRepair: '{}' still reads as short after the sync ({}); not retrying this load",
-                    name ? name : "?", still);
-                std::scoped_lock lock(g_passMutex);
-                g_gaveUp.insert(formID);
-                return true;
-            }
-
+            // No read-back here. SlaveTatsNG queues the actual overlay work and
+            // synchronize_tattoos() returns before it has run - measured: the
+            // call returned at .275 and the slots were applied at .277-.284 - so
+            // an immediate re-read always says "still short" and would give up
+            // on a repair that is about to succeed. The second pass is the
+            // read-back, and it can repair again if the body was wiped after.
             SKSE::log::info("LoadRepair: pass {} resynced '{}'", a_passNumber + 1, name ? name : "?");
             return true;
         }
@@ -310,10 +294,6 @@ namespace stm::ops::loadrepair
 
     void Arm()
     {
-        {
-            std::scoped_lock lock(g_passMutex);
-            g_gaveUp.clear();
-        }
         {
             std::scoped_lock lock(g_timerMutex);
             ++g_generation;
