@@ -71,6 +71,102 @@ namespace stm::obody
             return {};
         }
 
+        void AppendUtf8(std::string& a_out, unsigned a_code)
+        {
+            if (a_code < 0x80u) {
+                a_out.push_back(static_cast<char>(a_code));
+            } else if (a_code < 0x800u) {
+                a_out.push_back(static_cast<char>(0xC0u | (a_code >> 6)));
+                a_out.push_back(static_cast<char>(0x80u | (a_code & 0x3Fu)));
+            } else if (a_code < 0x10000u) {
+                a_out.push_back(static_cast<char>(0xE0u | (a_code >> 12)));
+                a_out.push_back(static_cast<char>(0x80u | ((a_code >> 6) & 0x3Fu)));
+                a_out.push_back(static_cast<char>(0x80u | (a_code & 0x3Fu)));
+            } else if (a_code < 0x110000u) {
+                a_out.push_back(static_cast<char>(0xF0u | (a_code >> 18)));
+                a_out.push_back(static_cast<char>(0x80u | ((a_code >> 12) & 0x3Fu)));
+                a_out.push_back(static_cast<char>(0x80u | ((a_code >> 6) & 0x3Fu)));
+                a_out.push_back(static_cast<char>(0x80u | (a_code & 0x3Fu)));
+            }
+        }
+
+        // BodySlide writes preset XML through .NET's XML writer, so anything that
+        // is markup-significant in a preset name comes back escaped: a preset
+        // called "Lazarus - Safiyya 3BA (NT&AD - Low)" is stored as
+        // name="Lazarus - Safiyya 3BA (NT&amp;AD - Low)". OBody parses the file
+        // with a real XML reader and therefore knows the decoded name, and that
+        // decoded name is what its plugin API hands back. Comparing it against
+        // our raw attribute text made every preset with an '&' in its name
+        // unresolvable - the preview reported "not found in SliderPresets" for a
+        // preset sitting right there on disk.
+        std::string DecodeXmlEntities(std::string_view a_text)
+        {
+            if (a_text.find('&') == std::string_view::npos) {
+                return std::string(a_text);
+            }
+
+            std::string out;
+            out.reserve(a_text.size());
+
+            for (std::size_t i = 0; i < a_text.size(); ++i) {
+                if (a_text[i] != '&') {
+                    out.push_back(a_text[i]);
+                    continue;
+                }
+
+                // A bare '&' is not legal XML, but a hand-edited preset may still
+                // contain one; copy it through instead of eating the text.
+                const auto semicolon = a_text.find(';', i + 1);
+                if (semicolon == std::string_view::npos || semicolon - i > 12) {
+                    out.push_back('&');
+                    continue;
+                }
+
+                const auto entity = a_text.substr(i + 1, semicolon - i - 1);
+                if (entity == "amp") {
+                    out.push_back('&');
+                } else if (entity == "lt") {
+                    out.push_back('<');
+                } else if (entity == "gt") {
+                    out.push_back('>');
+                } else if (entity == "quot") {
+                    out.push_back('"');
+                } else if (entity == "apos") {
+                    out.push_back('\'');
+                } else if (entity.size() > 1 && entity[0] == '#') {
+                    const bool hex = entity.size() > 2 && (entity[1] == 'x' || entity[1] == 'X');
+                    unsigned   code = 0;
+                    bool       valid = entity.size() > (hex ? 2u : 1u);
+                    for (std::size_t k = hex ? 2u : 1u; valid && k < entity.size(); ++k) {
+                        const char c = entity[k];
+                        if (hex && std::isxdigit(static_cast<unsigned char>(c))) {
+                            code = code * 16u + static_cast<unsigned>(std::isdigit(static_cast<unsigned char>(c))
+                                                                            ? c - '0'
+                                                                            : std::tolower(static_cast<unsigned char>(c)) - 'a' + 10);
+                        } else if (!hex && std::isdigit(static_cast<unsigned char>(c))) {
+                            code = code * 10u + static_cast<unsigned>(c - '0');
+                        } else {
+                            valid = false;
+                        }
+                        if (code >= 0x110000u) {
+                            valid = false;
+                        }
+                    }
+                    if (valid && code != 0) {
+                        AppendUtf8(out, code);
+                    } else {
+                        out.append(a_text.substr(i, semicolon - i + 1));
+                    }
+                } else {
+                    out.append(a_text.substr(i, semicolon - i + 1));
+                }
+
+                i = semicolon;
+            }
+
+            return out;
+        }
+
         // BodySlide sliders that OBody flips for UNP-family bodies.
         bool IsDefaultSlider(std::string_view a_name)
         {
@@ -126,8 +222,8 @@ namespace stm::obody
             if (name.empty()) {
                 return false;
             }
-            a_out.name = std::string(name);
-            a_out.set = std::string(GetAttr(header, "set"));
+            a_out.name = DecodeXmlEntities(name);
+            a_out.set = DecodeXmlEntities(GetAttr(header, "set"));
 
             const auto lowerSet = ToLower(a_out.set);
             // Only a named set tells us the preset's sex. Leaving it unknown is
@@ -218,6 +314,12 @@ namespace stm::obody
             // key: lowercase name. Presets are shared_ptr so a lookup result
             // stays valid across a rebuild of this map.
             std::unordered_map<std::string, std::shared_ptr<const BodyPreset>> byName;
+            // key: lowercase file stem. BodySlide normally keeps the file name
+            // and the <Preset name="..."> attribute identical, but a preset that
+            // was renamed on disk (or built by a tool that did) leaves OBody
+            // holding one and the XML holding the other. Only consulted when the
+            // authoritative name lookup misses.
+            std::unordered_map<std::string, std::shared_ptr<const BodyPreset>> byFile;
             std::uint64_t                                                      stamp = 0;
         };
 
@@ -369,10 +471,11 @@ namespace stm::obody
                     BodyPreset preset;
                     if (ParsePresetBlock(view.substr(pos, end - pos), preset)) {
                         auto key = ToLower(preset.name);
+                        auto stored = std::make_shared<const BodyPreset>(std::move(preset));
                         // First definition wins, matching OBody's "first file in
                         // alphabetical order" behaviour closely enough.
-                        g_db.byName.try_emplace(std::move(key),
-                            std::make_shared<const BodyPreset>(std::move(preset)));
+                        g_db.byFile.try_emplace(ToLower(entry.path().stem().string()), stored);
+                        g_db.byName.try_emplace(std::move(key), std::move(stored));
                     }
 
                     pos = end;
@@ -380,6 +483,22 @@ namespace stm::obody
             }
 
             g_loadedFlag.store(true, std::memory_order_release);
+        }
+
+        // Caller holds g_mutex and the database is loaded. The <Preset name>
+        // attribute is what OBody itself matches on, so it wins; the file stem
+        // is only a second chance for a preset that was renamed on disk.
+        std::shared_ptr<const BodyPreset> LookupLocked(std::string_view a_name)
+        {
+            const auto key = ToLower(a_name);
+
+            const auto byName = g_db.byName.find(key);
+            if (byName != g_db.byName.end()) {
+                return byName->second;
+            }
+
+            const auto byFile = g_db.byFile.find(key);
+            return byFile == g_db.byFile.end() ? nullptr : byFile->second;
         }
     }
 
@@ -391,8 +510,7 @@ namespace stm::obody
             LoadDatabaseLocked();
         }
 
-        const auto it = g_db.byName.find(ToLower(a_name));
-        return it == g_db.byName.end() ? nullptr : it->second;
+        return LookupLocked(a_name);
     }
 
     std::shared_ptr<const BodyPreset> TryFindPreset(std::string_view a_name)
@@ -404,8 +522,7 @@ namespace stm::obody
             return nullptr;
         }
 
-        const auto it = g_db.byName.find(ToLower(a_name));
-        return it == g_db.byName.end() ? nullptr : it->second;
+        return LookupLocked(a_name);
     }
 
     bool PresetsLoaded()
