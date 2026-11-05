@@ -44,6 +44,10 @@ Results appear in the status line at the bottom of the window:
 - `DEFERRED` means the data is written but the sync did not run: the target's 3D was not loaded, or SlaveTatsNG gave up for another reason (its NiOverride lock was taken, or adding the overlay nodes failed). With `AutoFinishSync` on - the default - the menu finishes that sync itself the moment the body is there, and says so when it does.
 - `FAILED` comes with a reason.
 
+### Overlay slots are shared with RaceMenu
+
+SlaveTats and RaceMenu's own tattoo page write the same NiOverride nodes: each area has a fixed number of slots (`iNumOverlays` in `skee64.ini`, 12/6/6/6 by default), named `Body [Ovl0]` and so on. A tattoo from either side takes one for good. The slot status panel therefore counts both: a slot that belongs to another overlay mod is listed in orange as `[external]` and is never written to or cleared, and the header shows how many slots are still free. Once an area reaches zero, RaceMenu's tattoo page has nowhere left to preview or apply into either - that is what "the tattoo menu stopped working after I installed this" usually is. Clear a slot, or raise `iNumOverlays`, and both work again.
+
 ### OBody preview
 
 An OBody install ships a *zeroed* body: the shape is applied at runtime, so the NIF on disk has none of it. The bundled `SlaveTatsMenuOBody.dll` makes the preview draw the preset the selected actor is actually wearing. It is installed by default and does nothing when OBody is absent:

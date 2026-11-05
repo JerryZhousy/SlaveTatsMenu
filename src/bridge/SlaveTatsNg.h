@@ -49,6 +49,18 @@ namespace stm::ng
     // them as slot numbers.
     std::int32_t GetAppliedInSlot(RE::Actor* a_actor, std::string_view a_area, int a_slot);
 
+    // Slots in a_area whose overlay was written by something other than
+    // SlaveTats. RaceMenu's own tattoo page writes the same "<Area> [OvlN]"
+    // NiOverride nodes, and so do other overlay mods, so those slots are taken
+    // even though the ledger says nothing about them - GetAppliedInSlot()
+    // returns 0 for every one of them. Upstream answers this by reading the
+    // node itself, which is the only way to see it.
+    //
+    // Returns false when upstream could not answer (interface or JContainers
+    // unavailable). Callers must then treat the slot list as unknown rather
+    // than as "nothing is external".
+    bool ExternalSlots(RE::Actor* a_actor, std::string_view a_area, std::vector<int>& a_out);
+
     // Slot count for an area, read from skee64.ini exactly like SlaveTatsNG does,
     // with the same fallback to the historic defaults.
     int MaxSlots(std::string_view a_area);

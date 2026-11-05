@@ -713,6 +713,22 @@ namespace stm::ui
                 return;
             }
 
+            // How much room is left. RaceMenu's own tattoo page writes the same
+            // slots, so once this reaches 0 that page has nowhere to preview or
+            // apply into either - worth saying out loud instead of leaving the
+            // user to count twelve rows.
+            const int  total = static_cast<int>(snapshot.slots.size());
+            const int  freeSlots = static_cast<int>(std::count_if(snapshot.slots.begin(), snapshot.slots.end(),
+                [](const data::SlotInfo& a_info) { return !a_info.occupied; }));
+            const bool full = total > 0 && freeSlots == 0;
+
+            ImGui::TextColored(full ? ImVec4(1.0f, 0.45f, 0.35f, 1.0f) : ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                "%s %d / %d", Tr("$STM_SlotsFreeLabel"), freeSlots, total);
+            if (full) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", Tr("$STM_SlotsFullHint"));
+            }
+
             for (const auto& slot : snapshot.slots) {
                 if (!slot.occupied) {
                     std::string label = std::string(Tr("$STM_Slot_2")) + std::to_string(slot.slot) + ": " + Tr("$STM_Slot_Empty");

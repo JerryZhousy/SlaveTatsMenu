@@ -133,6 +133,17 @@
 - 预设是普通 JSON，一个预设一个文件：`Data/SKSE/Plugins/SlaveTatsMenu/Presets/<名字>.json`，
   可以手改也可以拷给别人。文件名会做净化（路径分隔符、前导点都会被替换掉），中文名可用
 
+## 槽位是和 RaceMenu 共用的
+
+SlaveTats 和 RaceMenu 自带的纹身页写的是同一批 NiOverride 节点：每个部位固定若干槽位
+（`skee64.ini` 的 `iNumOverlays`，默认 12/6/6/6），节点名就是 `Body [Ovl0]` 这种。两边
+的纹身都实打实占掉一个槽位，用完为止。所以槽位面板两边一起算：别的覆层模组占着的槽位
+用橙色标成 `[外部占用]`，既不会被写入也不会被清除，面板顶部还会显示还剩几个空槽。
+
+某个部位的空槽归零之后，RaceMenu 的纹身页同样没有地方预览和落笔——「装了这个之后
+RaceMenu 纹身菜单就不灵了」通常就是这个。清掉一个槽位，或者把 `iNumOverlays` 调大，
+两边就都恢复。
+
 ## OBody 预览
 
 装了 OBody 之后，盘上的 `femalebody_1.nif` 是**零号身形**：形状是 OBody 在运行时用 RaceMenu

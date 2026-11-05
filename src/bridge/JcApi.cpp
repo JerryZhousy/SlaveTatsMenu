@@ -44,6 +44,7 @@ namespace stm::jc
             void (*array_add_obj)(void*, std::int32_t, std::int32_t, std::int32_t) = nullptr;
             std::int32_t (*array_count)(void*, std::int32_t) = nullptr;
             std::int32_t (*array_find_form)(void*, std::int32_t, RE::TESForm*, std::int32_t) = nullptr;
+            std::int32_t (*array_get_int)(void*, std::int32_t, std::int32_t, std::int32_t) = nullptr;
             std::int32_t (*array_get_obj)(void*, std::int32_t, std::int32_t, std::int32_t) = nullptr;
             std::int32_t (*array_object)(void*) = nullptr;
 
@@ -167,6 +168,7 @@ namespace stm::jc
         ok &= Resolve(refl, "addObj", "JArray", g_fn.array_add_obj);
         ok &= Resolve(refl, "count", "JArray", g_fn.array_count);
         ok &= Resolve(refl, "findForm", "JArray", g_fn.array_find_form);
+        ok &= Resolve(refl, "getInt", "JArray", g_fn.array_get_int);
         ok &= Resolve(refl, "getObj", "JArray", g_fn.array_get_obj);
         ok &= Resolve(refl, "object", "JArray", g_fn.array_object);
 
@@ -336,6 +338,28 @@ namespace stm::jc
             return {};
         }
         return { g_fn.array_get_obj(g_domain, a_arr.id, a_index, 0) };
+    }
+
+    std::int32_t ArrayGetInt(ObjId a_arr, std::int32_t a_index, std::int32_t a_default)
+    {
+        if (!g_fn.array_get_int || !a_arr || a_index < 0) {
+            return a_default;
+        }
+        return g_fn.array_get_int(g_domain, a_arr.id, a_index, a_default);
+    }
+
+    // A linear scan rather than JArray.findInt: the arrays this is used on hold
+    // slot indices (twelve entries at most), and binding one reflected function
+    // fewer keeps BindReflection's all-or-nothing contract safer.
+    bool ArrayHasInt(ObjId a_arr, std::int32_t a_value)
+    {
+        const auto count = ArrayCount(a_arr);
+        for (std::int32_t i = 0; i < count; ++i) {
+            if (ArrayGetInt(a_arr, i, -1) == a_value) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void ArrayAddForm(ObjId a_arr, RE::TESForm* a_form)

@@ -74,6 +74,12 @@ namespace stm::jc
     // --- arrays -----------------------------------------------------------
     std::int32_t ArrayCount(ObjId a_arr);
     ObjId        ArrayGetObj(ObjId a_arr, std::int32_t a_index);
+
+    // Elements of a plain int array. Used for the slot lists upstream hands
+    // back (external_slots): those are indices, not object ids, so ArrayGetObj
+    // would return 0 for every entry.
+    std::int32_t ArrayGetInt(ObjId a_arr, std::int32_t a_index, std::int32_t a_default = 0);
+    bool         ArrayHasInt(ObjId a_arr, std::int32_t a_value);
     void         ArrayAddForm(ObjId a_arr, RE::TESForm* a_form);
     std::int32_t ArrayFindForm(ObjId a_arr, RE::TESForm* a_form);
     void         ArrayAddObj(ObjId a_arr, ObjId a_obj);

@@ -129,16 +129,24 @@ namespace stm::ops
             return -1;
         }
 
-        // A slot whose ledger entry carries no name belongs to another overlay mod
-        // (RaceMenu, another tattoo mod, ...). Apply already refuses to overwrite
-        // those; the clearing paths have to refuse as well, otherwise "clear
-        // everything" silently deletes data this plugin does not own.
+        // A slot another overlay mod owns. RaceMenu's own tattoo page writes the
+        // same "<Area> [OvlN]" NiOverride nodes this plugin writes through
+        // SlaveTatsNG, and so do other overlay mods - but none of them appear in
+        // the SlaveTats ledger, so GetAppliedInSlot() reports those slots as
+        // empty. Upstream's external_slots() reads the node itself and is the
+        // only way to tell; the ledger heuristic below is just a fallback for
+        // when it cannot answer.
         //
-        // Returns false when JContainers is unavailable: without it we cannot tell
-        // an external overlay from our own, and blocking every slot would be worse
-        // than the risk of clearing one.
+        // Apply and the clearing paths both refuse these slots: writing over one
+        // destroys that mod's tattoo, and clearing one deletes data this plugin
+        // does not own.
         bool IsExternalSlot(RE::Actor* a_actor, std::string_view a_area, int a_slot)
         {
+            std::vector<int> external;
+            if (ng::ExternalSlots(a_actor, a_area, external)) {
+                return std::find(external.begin(), external.end(), a_slot) != external.end();
+            }
+
             if (!jc::Ready()) {
                 return false;
             }
@@ -149,6 +157,32 @@ namespace stm::ops
             }
 
             return jc::MapGetStr(jc::ObjId{ handle }, "name").empty();
+        }
+
+        // True when no slot in the area can take a tattoo any more: every one is
+        // either in the ledger or held by another overlay mod. False when a slot
+        // is free, and false when upstream could not be asked - the caller then
+        // simply lets the operation try and report whatever upstream says.
+        bool AreaIsFull(RE::Actor* a_actor, std::string_view a_area)
+        {
+            const int maxSlots = ng::MaxSlots(a_area);
+            if (maxSlots <= 0) {
+                return false;
+            }
+
+            std::vector<int> external;
+            const bool       haveExternal = ng::ExternalSlots(a_actor, a_area, external);
+
+            for (int slot = 0; slot < maxSlots; ++slot) {
+                if (haveExternal && std::find(external.begin(), external.end(), slot) != external.end()) {
+                    continue;
+                }
+                if (ng::GetAppliedInSlot(a_actor, a_area, slot) <= 0) {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
 
@@ -242,16 +276,22 @@ namespace stm::ops
             }
 
             if (slotInRange && jc::Ready()) {
-                const auto occupiedHandle = ng::GetAppliedInSlot(actor, a_request.tattoo.area, a_request.targetSlot);
                 bool proceedWithSlot = true;
+
+                // Asked first and independently of the ledger: another overlay
+                // mod's slot has no ledger entry, so GetAppliedInSlot() below
+                // would call it empty and the write would land on top of it.
+                if (IsExternalSlot(actor, a_request.tattoo.area, a_request.targetSlot)) {
+                    SKSE::log::warn("Ops: slot {} in {} is an external overlay, refusing to overwrite to protect mod data; falling back to auto allocation",
+                        a_request.targetSlot, a_request.tattoo.area);
+                    proceedWithSlot = false;
+                }
+
+                const auto occupiedHandle = proceedWithSlot
+                    ? ng::GetAppliedInSlot(actor, a_request.tattoo.area, a_request.targetSlot)
+                    : 0;
                 if (occupiedHandle > 0) {
-                    const jc::ObjId obj{ occupiedHandle };
-                    const bool isExternal = jc::MapGetStr(obj, "name").empty();
-                    if (isExternal) {
-                        SKSE::log::warn("Ops: slot {} in {} is an external overlay, refusing to overwrite to protect mod data; falling back to auto allocation",
-                            a_request.targetSlot, a_request.tattoo.area);
-                        proceedWithSlot = false;
-                    } else if (Config::Get().slotPolicy == SlotPolicy::kOverwrite) {
+                    if (Config::Get().slotPolicy == SlotPolicy::kOverwrite) {
                         SKSE::log::info("Ops: slot {} occupied in {}, removing existing per overwrite policy", a_request.targetSlot, a_request.tattoo.area);
                         if (ng::RemoveFromSlot(actor, a_request.tattoo.area, a_request.targetSlot, true) != ng::Status::kOk) {
                             SKSE::log::warn("Ops: failed to remove existing tattoo from slot {} in {}, falling back to auto allocation", a_request.targetSlot, a_request.tattoo.area);
@@ -342,6 +382,18 @@ namespace stm::ops
 
                     SKSE::log::warn("Ops: could not resolve tattoo '{}' / '{}' for slot placement, falling back to auto slot", section, name);
                 }
+            }
+
+            // Nothing left to allocate into. Say so plainly: the ledger and
+            // another overlay mod share these slots (RaceMenu's own tattoo page
+            // writes the same nodes), and "not present in the ledger" would send
+            // people looking in the wrong place. Only for auto allocation - an
+            // explicit request that failed did so for its own reason.
+            if (a_request.targetSlot < 0 && AreaIsFull(actor, a_request.tattoo.area)) {
+                data::SlotSnapshot::Get().Invalidate();
+                Push(OpResult::Fail("Apply", name,
+                    std::string(Tr("$STM_Ops_AreaFull")) + a_request.tattoo.area + Tr("$STM_Ops_AreaFullSlots")));
+                return;
             }
 
             // Auto slot: upstream picks the first free one and synchronises
@@ -504,12 +556,25 @@ namespace stm::ops
             const int maxSlots = ng::MaxSlots(a_area);
             int       cleared = 0;
             int       skipped = 0;
+
+            // One upstream query for the whole area rather than one per slot,
+            // and it also lets the count include slots the ledger has never
+            // heard of (another mod's overlays).
+            std::vector<int> external;
+            const bool       haveExternal = ng::ExternalSlots(actor, a_area, external);
+            const auto       isExternal = [&](int a_slot) {
+                if (haveExternal) {
+                    return std::find(external.begin(), external.end(), a_slot) != external.end();
+                }
+                return IsExternalSlot(actor, a_area, a_slot);
+            };
+
             for (int slot = 0; slot < maxSlots; ++slot) {
+                if (isExternal(slot)) {
+                    ++skipped;
+                    continue;
+                }
                 if (ng::GetAppliedInSlot(actor, a_area, slot) > 0) {
-                    if (IsExternalSlot(actor, a_area, slot)) {
-                        ++skipped;
-                        continue;
-                    }
                     if (ng::RemoveFromSlot(actor, a_area, slot, true) == ng::Status::kOk) {
                         ++cleared;
                     }
@@ -552,12 +617,22 @@ namespace stm::ops
             int skipped = 0;
             for (const auto area : kAreas) {
                 const int maxSlots = ng::MaxSlots(area);
+
+                std::vector<int> external;
+                const bool       haveExternal = ng::ExternalSlots(actor, area, external);
+                const auto       isExternal = [&](int a_slot) {
+                    if (haveExternal) {
+                        return std::find(external.begin(), external.end(), a_slot) != external.end();
+                    }
+                    return IsExternalSlot(actor, area, a_slot);
+                };
+
                 for (int slot = 0; slot < maxSlots; ++slot) {
+                    if (isExternal(slot)) {
+                        ++skipped;
+                        continue;
+                    }
                     if (ng::GetAppliedInSlot(actor, area, slot) > 0) {
-                        if (IsExternalSlot(actor, area, slot)) {
-                            ++skipped;
-                            continue;
-                        }
                         if (ng::RemoveFromSlot(actor, area, slot, true) == ng::Status::kOk) {
                             ++cleared;
                         }

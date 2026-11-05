@@ -45,6 +45,8 @@ set(STM_SOURCES
     src/bridge/KnownTargets.h
     src/bridge/SlaveTatsNg.cpp
     src/bridge/SlaveTatsNg.h
+    src/bridge/NgGuardedCall.cpp
+    src/bridge/NgGuardedCall.h
     src/data/SlotSnapshot.cpp
     src/data/SlotSnapshot.h
     src/data/CacheParser.cpp
