@@ -64,6 +64,8 @@ set(STM_SOURCES
     src/ops/TattooOps.h
     src/ops/PendingSync.cpp
     src/ops/PendingSync.h
+    src/ops/LoadRepair.cpp
+    src/ops/LoadRepair.h
     src/data/TargetState.cpp
     src/data/TargetState.h
     src/obody/OBodyBridge.cpp
@@ -75,6 +77,8 @@ set(STM_SOURCES
     src/ui/UiState.h
     src/diag/Probe.cpp
     src/diag/Probe.h
+    src/diag/OverlayState.cpp
+    src/diag/OverlayState.h
     src/diag/CallTrace.cpp
     src/diag/CallTrace.h
     src/render/MannequinRenderer.cpp

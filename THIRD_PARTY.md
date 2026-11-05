@@ -92,12 +92,14 @@ It is installed unconditionally and stays dormant when OBody is not present.
 
 ## Runtime dependencies, not redistributed
 
-Required in the game, but not built against and not shipped:
+Required or expected in the game, but not built against and not shipped:
 
 - **SlaveTatsNG** (nopse0, Apache-2.0): the plugin drives the interface it publishes.
-- **SlaveTats** (murfk): the original mod SlaveTatsNG installs over. No Papyrus script, ESP or asset
-  from it is copied into this project; the plugin only reads and writes the JContainers ledger keys
-  that SlaveTats defines.
+- **SlaveTats** (murfk): **optional.** No Papyrus script, ESP or asset from it is copied into this
+  project, and nothing here calls into it. It is listed because its ESP hosts the `SlaveTatsExtra`
+  quest whose Papyrus alias re-syncs tattoos after a load; this plugin does that itself
+  (`ResyncAfterLoad`), so the original is only needed for its MCM. The JContainers ledger keys this
+  plugin reads and writes are the ones SlaveTats defines, and SlaveTatsNG writes them natively.
 - **JContainers SE** (SilverIce / ryobg, MIT): the storage layer behind that ledger.
 - **SKSE Menu Framework** (QTR-Modding): hosts the window and the ImGui renderer.
 - **SKSE64** (the SKSE team): its plugin API headers are what CommonLibSSE-NG compiles against.

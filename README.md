@@ -2,7 +2,7 @@
 
 An in-game tattoo editor for [SlaveTatsNG](https://github.com/nopse0/SlaveTatsNG), running as an SKSE plugin with a Dear ImGui window drawn over the running game. Browse a few thousand tattoos by body area, mod or name, apply and recolour them, see which overlay slots an actor is using, clear individual slots, and save an actor's whole set as a preset you can apply to someone else.
 
-It talks to SlaveTatsNG's published C++ interface directly through SKSE rather than going through Papyrus. The catalogue lives in memory with virtual scrolling, every operation is verified by reading the ledger back, and the actor you touched is registered in `.SlaveTatsMenu.known_targets` so the tattoos survive a reload. There is no ESP and no plugin slot involved.
+It talks to SlaveTatsNG's published C++ interface directly through SKSE rather than going through Papyrus. The catalogue lives in memory with virtual scrolling, every operation is verified by reading the ledger back, and a load is repaired natively - recorded slots are compared against the body and only the ones that went missing are re-applied. There is no ESP and no plugin slot involved.
 
 <!-- Nexus page URL goes here once the page is live. -->
 
@@ -12,11 +12,18 @@ It talks to SlaveTatsNG's published C++ interface directly through SKSE rather t
 |---|---|
 | SKSE64 | 1.5.39 or newer, matching your game version |
 | [SlaveTatsNG](https://github.com/nopse0/SlaveTatsNG) | required |
-| SlaveTats (the original by murfk) | required, SlaveTatsNG installs over it |
+| SlaveTats (the original by murfk) | optional: only its MCM needs it, see below |
 | [JContainers SE](https://www.nexusmods.com/skyrimspecialedition/mods/16495) | required |
 | [SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352) | required, it hosts the window |
 | RaceMenu | needed by SlaveTats itself; its `skee64.ini` supplies the per-area slot limits this plugin displays |
 | [OBody NG](https://www.nexusmods.com/skyrimspecialedition/mods/77016) 4.3.7+ | optional: lets the 3D preview show the selected actor's preset instead of the zeroed body |
+
+**The original SlaveTats is optional.** Nothing here calls into it: every tattoo operation goes
+through SlaveTatsNG's native interface, and the one job that used to need the original - the Papyrus
+alias on its `SlaveTatsExtra` quest that re-syncs tattoos after a load - is done by this plugin itself
+(`ResyncAfterLoad`). Install it only if you want the MCM, because that quest is also what hosts
+SlaveTatsNG's own MCM: without the ESP neither menu exists. Your tattoo packs are unaffected either
+way - they are texture folders and JSON, not plugin records.
 
 Built with CommonLibSSE-NG, so the DLL covers SE 1.5.39+ and AE. SE 1.5.97 is the runtime it has actually been played through; AE loads but is unverified. VR is not supported.
 
@@ -70,6 +77,7 @@ DefaultColor = 0x000000 ; starting colour for a new tattoo
 DefaultAlpha = 1.0
 Language = en           ; en / zh
 AutoFinishSync = 1      ; finish the syncs SlaveTatsNG dropped while the window is open
+ResyncAfterLoad = 1     ; after a load, put back overlays the body lost
 
 [UI]
 WindowWidth = 1280.0
@@ -91,6 +99,8 @@ Presets are plain JSON, one file per preset, in `Data/SKSE/Plugins/SlaveTatsMenu
 The log is at `Documents/My Games/Skyrim Special Edition/SKSE/SlaveTatsMenu.log`. It records the boot handshake, which catalogue source won, and the outcome of every operation. When a tattoo shows up in the ledger but not on the body, turn on the probe, press `Snapshot now`, and the log will name the likely cause: 3D not loaded, a stuck `.updated` flag, an empty `.SlaveTats.version`, or another overlay mod holding the slot.
 
 That stuck `.updated` flag is worth knowing about: it is SlaveTatsNG's own "this actor still needs a sync" marker, raised by every ledger write and cleared only by a sync that runs to the end. Nothing in SlaveTatsNG ever reads it again, so a sync that is skipped - the body was not loaded yet, the NiOverride lock was held by something else - strands the actor until something calls sync again. That is what "the tattoo is in the menu but not on the body, and force sync fixes it" looks like, and it is not specific to this menu: a mod that applies tattoos on an actor it has not looked at hits the same wall. `AutoFinishSync` closes the loop while the window is open, retrying a flagged actor up to five times, two seconds apart.
+
+A load is the one moment that cannot be fixed by reacting to an operation, because there is no operation. SlaveTatsNG's own on-load pass walks its known targets and calls `synchronize_tattoos()`, which cancels while `.SlaveTats.updated` is 0 - and after a load the ledger has not changed, so a body that lost its overlays keeps nothing. With `ResyncAfterLoad` on (the default) the plugin samples the player and every actor with loaded 3D ten and thirty seconds after a load, compares each recorded slot against what is really on the body, and forces a sync only where a slot the ledger lists is empty. Intact characters are left alone on purpose: a blanket resync clears the whole slot range and would take another overlay mod's work with it.
 
 ## Build from source
 

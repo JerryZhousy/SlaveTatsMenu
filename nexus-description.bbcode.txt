@@ -11,7 +11,7 @@ It talks to SlaveTatsNG's C++ interface directly through SKSE rather than going 
 [list]
 [*][b]SKSE64[/b] matching your game version - [url=https://skse.silverlock.org/]skse.silverlock.org[/url]
 [*][b]SlaveTatsNG[/b] (required) - [url=https://github.com/nopse0/SlaveTatsNG]github.com/nopse0/SlaveTatsNG[/url]. This plugin drives SlaveTatsNG's published C++ interface, so it is not optional.
-[*][b]SlaveTats[/b] by murfk (LoversLab) - the original mod, which SlaveTatsNG installs over. Its ESP plus your tattoo packs are where the actual tattoos come from.
+[*][b]SlaveTats[/b] by murfk (LoversLab) - [b]optional[/b]. Only its MCM needs it. Every tattoo operation goes through SlaveTatsNG, and the on-load re-sync that used to come from the original's Papyrus alias is done by this plugin itself ([i]ResyncAfterLoad[/i]). Without that ESP there is no MCM at all - neither the original's nor SlaveTatsNG's - and that is the only thing you give up. Your tattoo packs are unaffected.
 [*][b]JContainers SE[/b] (required) - [url=https://www.nexusmods.com/skyrimspecialedition/mods/16495]Nexus 16495[/url]. SlaveTats' storage layer; without it recolouring and presets do not work.
 [*][b]SKSE Menu Framework[/b] (required) - [url=https://www.nexusmods.com/skyrimspecialedition/mods/120352]Nexus 120352[/url]. It hosts the window and provides the ImGui renderer.
 [*][b]RaceMenu[/b] - not required by this plugin specifically, but SlaveTats needs it, and this plugin reads the per-area slot counts from RaceMenu's skee64.ini (falling back to conservative built-in values if that file is missing).
@@ -65,7 +65,7 @@ The status line at the bottom never guesses. After each operation the plugin rea
 The entry stays on screen for 15 seconds, and every operation is also written to the log.
 
 [b][size=4]Tattoos survive a reload[/size][/b]
-SlaveTatsNG re-syncs tattoos on load by walking [code].SlaveTatsMenu.known_targets[/code], and that array is normally written by the MCM when you close it. This plugin bypasses the MCM, so it registers every actor you touch in that array itself. Without that, followers would lose their tattoos on the next load.
+SlaveTatsNG's own on-load pass is a no-op while the ledger is unchanged, so a body that lost its overlays stays bare. With [code]ResyncAfterLoad = 1[/code] (the default) the plugin samples the player and every actor with loaded 3D ten and thirty seconds after a load, compares each recorded slot against what is really on the body, and forces a sync only where a slot the ledger lists is empty. Intact characters are left alone on purpose: a blanket resync clears the whole slot range and would take another overlay mod's work with it. This replaces the Papyrus alias in the original SlaveTats, so followers keep their tattoos without that ESP.
 
 [b][size=4]Where the catalogue comes from[/size][/b]
 The plugin trusts three sources in order, and tells you in the header which one won:
@@ -135,7 +135,7 @@ Visual Studio 2022, CMake 3.22+, vcpkg with the [code]x64-windows-static-md[/cod
 [i]What the plugin talks to[/i]
 [list]
 [*][b]nopse0[/b] - [url=https://github.com/nopse0/SlaveTatsNG]SlaveTatsNG[/url] and the C++ interface it publishes, which this plugin drives
-[*][b]murfk[/b] - the original SlaveTats, the mod SlaveTatsNG installs over, and everyone who kept the tattoo packs coming
+[*][b]murfk[/b] - the original SlaveTats, whose ledger and tattoo packs this whole ecosystem still runs on, and everyone who kept the packs coming
 [*][b]SilverIce[/b] and [b]ryobg[/b] - [url=https://github.com/ryobg/JContainers]JContainers[/url], the storage layer the tattoo ledger lives in
 [*][b]Thiago Kaqiue (QTR-Modding)[/b] - [url=https://www.nexusmods.com/skyrimspecialedition/mods/120352]SKSE Menu Framework[/url], which hosts the window and draws the interface
 [*][b]The SKSE team[/b] - obviously

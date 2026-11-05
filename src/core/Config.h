@@ -37,6 +37,12 @@ namespace stm
         // until the user presses "force sync".
         bool autoFinishSync = true;
 
+        // Once per load, compare each loaded character's ledger against the
+        // overlays actually on the body and re-apply the ones that went missing.
+        // See ops/LoadRepair.h for why this is gated on a real mismatch instead
+        // of being a blanket resync.
+        bool resyncAfterLoad = true;
+
         // [UI]
         float windowWidth = 1280.0f;
         float windowHeight = 720.0f;

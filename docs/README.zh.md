@@ -9,6 +9,7 @@
 |---|---|
 | Skyrim SE/AE | 1.5.39 以上，已在 1.5.97 上运行 |
 | [SlaveTatsNG](https://github.com/nopse0/SlaveTatsNG) | 提供纹身数据的读写接口，必需 |
+| SlaveTats（murfk 原版） | 可选：只有它的 MCM 需要它。所有纹身操作都走 SlaveTatsNG，读档重贴由本插件的 `ResyncAfterLoad` 原生完成；没有这个 ESP 就没有 MCM（原版的和 SlaveTatsNG 的都没有），这是唯一的代价。纹身包不受影响 |
 | JContainers | SlaveTatsNG 的存储层，必需（缺失时插件仍会启动，但功能降级） |
 | SKSE Menu Framework | 提供 ImGui 渲染和窗口，必需 |
 
@@ -74,9 +75,10 @@
 改 `color` / `invertedAlpha`，置 `.SlaveTats.updated = 1`，再触发同步。这也是官方 MCM 的做法。
 
 **维护 `.SlaveTatsMenu.known_targets`。** 上游的 `SlaveTatsOnLoad.OnPlayerLoadGame`
-会遍历这个数组，对里面每个角色重新同步纹身——这是读档后纹身不丢的唯一机制，
-而它平时由 MCM 在关闭时写入。本插件绕开了 MCM，所以每次操作目标时都会自己把该角色
-登记进去，否则随从身上的纹身读档后就会消失。
+会遍历这个数组，对里面每个角色重新同步纹身——但前提是原版 SlaveTats 的 ESP 装着，
+因为那个别名挂在它的 `SlaveTatsExtra` quest 上。这个数组平时由 MCM 在关闭时写入，
+本插件绕开了 MCM，所以每次操作目标时都会自己把该角色登记进去。没有原版时这条链路
+根本不存在，改由下面 `ResyncAfterLoad` 的原生补丁兜住。
 
 **每个操作都回查。** 调完接口不算成功，插件会再读一次账本，确认槽位/颜色真的变了，
 然后把真实结果写到界面底部的状态栏。三色状态：绿=成功、黄=延后、红=失败。
@@ -97,6 +99,16 @@
 `simple_remove_tattoo` 的返回值语义以前读反了——上游这两个高层函数是**成功返回 true**，
 和底层 `fail_t` 正好相反；改正之后，账本已经写进去而返回 false 就只剩一种解释：它内部那次
 同步被丢了，于是状态栏会如实报「延后」而不是「成功」。
+
+**读档是唯一一个没法靠「操作」兜住的时刻，因为根本没有操作。** 上游的 `SlaveTatsOnLoad`
+会遍历 known targets 挨个调 `synchronize_tattoos()`，而 native 在 `.SlaveTats.updated` 为 0
+时直接取消——读档后账本本来就没变，于是掉了覆层的身体不会被补回来。`[General]
+ResyncAfterLoad = 1`（默认开）在读档后 10 秒和 30 秒各采一次：主角加上所有 3D 已加载的角色，
+逐槽位比对账本和身上真实存在的覆层，只在「账本说有、这一格是空的」时才强制同步一次。
+
+不按数量比、也不无差别重同步，都是刻意的：RaceMenu 的覆层写在同一批槽位里，数量比会把
+「三条别人的 + 丢了一条自己的」算成没丢；而无差别重同步会先清空整段槽位再按账本重贴，
+把别的覆层模组写进去的东西一起抹掉。覆层完好的角色一个都不碰。
 
 **线程模型是明确的。** 实测确认菜单框架的渲染回调挂在游戏主线程上（日志会打出渲染
 线程和加载线程，两个号应当一致），而 SKSE 的任务队列不保证在同一线程执行，所以跨线程
@@ -178,6 +190,7 @@ DefaultColor = 0x000000 ; 新纹身的默认颜色
 DefaultAlpha = 1.0      ; 新纹身的默认透明度
 Language = zh           ; zh / en，可在游戏内设置一键切换或手改此项
 AutoFinishSync = 1      ; 窗口打开期间，替 SlaveTatsNG 补上它跳过的同步
+ResyncAfterLoad = 1     ; 读档后，把身上掉了的覆层补回去
 
 [UI]
 WindowWidth = 1280.0

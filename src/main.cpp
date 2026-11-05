@@ -9,6 +9,7 @@
 #include "diag/CallTrace.h"
 #include "diag/Probe.h"
 #include "obody/OBodyBridge.h"
+#include "ops/LoadRepair.h"
 #include "ops/PendingSync.h"
 #include "render/MannequinRenderer.h"
 #include "ui/InputHandler.h"
@@ -57,6 +58,12 @@ namespace
                 // The actors watched for a dropped sync belong to the previous
                 // session's FormIDs; a load starts from a clean slate.
                 stm::ops::pending::Reset();
+
+                // Nothing in this plugin takes overlays off a body, but a load
+                // can leave them off anyway: SlaveTatsNG's own on-load pass is a
+                // no-op while the ledger is unchanged, so a body that lost its
+                // overlays stays bare. Repair the mismatch a few seconds in.
+                stm::ops::loadrepair::Arm();
             }
             break;
 
@@ -162,6 +169,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 
     std::atexit([] {
         stm::diag::Stop();
+        stm::ops::loadrepair::Shutdown();
         stm::render::MannequinRenderer::Get().Shutdown();
     });
 
