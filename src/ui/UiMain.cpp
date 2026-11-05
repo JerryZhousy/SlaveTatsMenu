@@ -88,17 +88,24 @@ namespace stm::ui
             return Tr(a_key);
         }
 
+        // Applies the configured font scale to the current window for the scope
+        // of one tab, then puts it back.
+        //
+        // It used to read the previous value straight out of ImGuiWindow, which
+        // only works while the framework's ImGui build is the one the vendored
+        // header was generated from: the field is at a different offset in a
+        // different build, so "previous scale" could be any float in the heap -
+        // and restoring it writes that float back into the real window, where
+        // it multiplies the font size. The framework draws its own windows at
+        // scale 1.0, so that is what is restored here instead, and the struct
+        // is never touched.
         struct FontScaleScope
         {
-            float prevScale = 1.0f;
-            bool  active = false;
+            bool active = false;
 
             explicit FontScaleScope(float s)
             {
-                if (auto* win = ImGui::GetCurrentWindowRead()) {
-                    prevScale = win->FontWindowScale;
-                }
-                if (s > 0.01f && std::abs(s - prevScale) > 0.001f) {
+                if (s > 0.5f && s < 4.0f && std::abs(s - 1.0f) > 0.001f) {
                     ImGui::SetWindowFontScale(s);
                     active = true;
                 }
@@ -106,7 +113,7 @@ namespace stm::ui
             ~FontScaleScope()
             {
                 if (active) {
-                    ImGui::SetWindowFontScale(prevScale);
+                    ImGui::SetWindowFontScale(1.0f);
                 }
             }
         };
@@ -161,6 +168,38 @@ namespace stm::ui
 
         // ---------------------------------------------------------------- list
 
+        // The framework's SDK resolves every ImGui entry point with
+        // GetProcAddress and then calls it - no null check anywhere. One export
+        // missing from an unfamiliar framework build is therefore a jump to
+        // 0x0, which kills the whole game and leaves nothing in the log: the
+        // last line is whatever the plugin wrote before the click.
+        //
+        // The clipper is the one place where that is cheap to rule out, so its
+        // exports are checked once and the list falls back to drawing every row
+        // when any of them is absent.
+        bool ClipperExportsPresent()
+        {
+            static const bool s_present = [] {
+                const char* const required[] = {
+                    "ImGuiListClipper_ImGuiListClipper",
+                    "ImGuiListClipper_Begin",
+                    "ImGuiListClipper_Step",
+                    "ImGuiListClipper_End",
+                    "ImGuiListClipper_destroy",
+                };
+
+                bool ok = true;
+                for (const char* name : required) {
+                    if (!::GetProcAddress(menuFramework, name)) {
+                        SKSE::log::error("UI: the installed SKSE Menu Framework does not export {} - lists will be drawn without the clipper", name);
+                        ok = false;
+                    }
+                }
+                return ok;
+            }();
+            return s_present;
+        }
+
         // Wraps the framework's list clipper. Falls back to drawing everything
         // when the framework build does not expose the clipper API.
         class ListClipper
@@ -168,6 +207,10 @@ namespace stm::ui
         public:
             explicit ListClipper(int a_count) : _count(a_count)
             {
+                if (!ClipperExportsPresent()) {
+                    return;
+                }
+
                 _clipper = ImGuiMCP::ImGuiListClipperManager::Create();
                 if (_clipper) {
                     ImGuiMCP::ImGuiListClipperManager::Begin(_clipper, a_count, -1.0f);
@@ -666,6 +709,7 @@ namespace stm::ui
             if (tattoos.empty()) {
                 ImGui::TextDisabled("%s", Tr("$STM_NoTattoosMatchThe"));
             } else {
+                stm::log::Stage("tattoo-list:rows");
                 ListClipper clipper(static_cast<int>(tattoos.size()));
                 int start = 0;
                 int end = 0;
@@ -980,10 +1024,12 @@ namespace stm::ui
             auto& db = data::TattooDatabase::Get();
 
             ImGui::BeginChild("inspector_panel", ImVec2(a_width, a_height), true);
+            stm::log::Stage("inspector:begin");
             ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s", Tr("$STM_Heading_Properties"));
             ImGui::Separator();
 
             if (state.hasSelection) {
+                stm::log::Stage("inspector:selection");
                 ImGui::Text("%s: %s", Tr("$STM_TattooLower"), state.selected.name.c_str());
                 ImGui::Text("%s: %s", Tr("$STM_ModLower"), state.selected.section.c_str());
                 ImGui::Text("%s: %s", Tr("$STM_AreaLower"), state.selected.area.c_str());
@@ -993,6 +1039,7 @@ namespace stm::ui
                 }
 
                 if (state.previewTexture) {
+                    stm::log::Stage("inspector:preview");
                     ImGui::Spacing();
 
                     ImGui::Text("%s:", Tr("$STM_ModelColor"));
@@ -1323,6 +1370,7 @@ namespace stm::ui
 
             ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s (%s):", Tr("$STM_SlotStatus"), area.c_str());
 
+            stm::log::Stage("inspector:slots");
             data::SlotSnapshot::Get().Request(data::TargetState::Get().Handle(), area);
             DrawSlotList(area);
 
@@ -1367,6 +1415,7 @@ namespace stm::ui
 
             ImGui::Spacing();
             if (ImGui::CollapsingHeader(Tr("$STM_Presets"))) {
+                stm::log::Stage("inspector:presets");
                 static char s_presetName[64] = "";
                 static bool s_clearFirst = true;
 
@@ -1467,6 +1516,7 @@ namespace stm::ui
 
             ImGui::Spacing();
             if (ImGui::CollapsingHeader(Tr("$STM_Diagnostics"))) {
+                stm::log::Stage("inspector:diagnostics");
                 ImGui::Text("%s: %s", Tr("$STM_Status"), diag::IsRunning() ? Tr("$STM_Probe_Running") : Tr("$STM_Probe_Stopped"));
                 const char* probeToggleLabel = diag::IsRunning() ? Tr("$STM_Probe_BtnStop") : Tr("$STM_Probe_BtnStart");
                 if (ImGui::Button(probeToggleLabel, ButtonSize(probeToggleLabel, 110.0f, 26.0f))) {
@@ -1559,6 +1609,7 @@ namespace stm::ui
                 return;
             }
 
+            stm::log::Stage("main:font-scope");
             FontScaleScope fontScope(Config::Get().fontScale);
 
             auto& db = data::TattooDatabase::Get();
@@ -1571,6 +1622,7 @@ namespace stm::ui
                 ImGui::Separator();
             }
 
+            stm::log::Stage("main:header");
             ImGui::TextDisabled("%s: %zu (%s)   %s: %s   %s: %d",
                 Tr("$STM_Library"),
                 db.Size(),
@@ -2014,6 +2066,7 @@ namespace stm::ui
                 return;
             }
 
+            stm::log::Stage("settings:draw");
             FontScaleScope fontScope(Config::Get().fontScale);
             auto&          config = Config::Get();
 
@@ -2419,9 +2472,123 @@ namespace stm::ui
         return g_window && g_window->IsOpen;
     }
 
+    // Every ImGui call in this file goes through the framework's C API, which
+    // resolves each entry point with GetProcAddress and then calls it without a
+    // null check. A framework build that does not export one of them therefore
+    // does not fail loudly - it jumps to 0x0 and takes the whole game down with
+    // nothing in the log beyond whatever the plugin wrote before the click.
+    //
+    // The list below is the set of entry points this file actually calls, taken
+    // from the calls themselves and mapped through the SDK header. It is checked
+    // once, before anything is registered, so an incompatible framework build
+    // ends as a log line instead of a crash on the first frame.
+    static bool FrameworkExportsPresent()
+    {
+        const char* const kRequired[] = {
+            "igAlignTextToFramePadding",
+            "igBegin",
+            "igBeginChild_Str",
+            "igBeginCombo",
+            "igBeginPopup",
+            "igBeginPopupModal",
+            "igBeginTabBar",
+            "igBeginTabItem",
+            "igButton",
+            "igCalcTextSize",
+            "igCheckbox",
+            "igClearActiveID",
+            "igCloseCurrentPopup",
+            "igCollapsingHeader_TreeNodeFlags",
+            "igColorEdit3",
+            "igEnd",
+            "igEndChild",
+            "igEndCombo",
+            "igEndPopup",
+            "igEndTabBar",
+            "igEndTabItem",
+            "igGetContentRegionAvail",
+            "igGetCursorPosX",
+            "igGetFrameHeight",
+            "igGetIO",
+            "igGetMainViewport",
+            "igGetStyle",
+            "igGetTextLineHeight",
+            "igGetTextLineHeightWithSpacing",
+            "igGetWindowContentRegionMax",
+            "igGetWindowSize",
+            "igImage",
+            "igInputTextWithHint",
+            "igIsItemDeactivatedAfterEdit",
+            "igIsItemHovered",
+            "igIsKeyDown_Nil",
+            "igIsKeyPressed_Bool",
+            "igIsMouseClicked_Bool",
+            "igIsMouseDown_Nil",
+            "igIsPopupOpen_Str",
+            "igIsWindowAppearing",
+            "igNewLine",
+            "igOpenPopup_Str",
+            "igPopItemWidth",
+            "igPopStyleColor",
+            "igPushItemWidth",
+            "igPushStyleColor_U32",
+            "igRadioButton_Bool",
+            "igSameLine",
+            "igSelectable_Bool",
+            "igSeparator",
+            "igSetCursorPosX",
+            "igSetItemDefaultFocus",
+            "igSetNextItemWidth",
+            "igSetNextWindowBgAlpha",
+            "igSetNextWindowPos",
+            "igSetNextWindowSize",
+            "igSetScrollY_Float",
+            "igSetTooltipV",
+            "igSetWindowFocus_Nil",
+            "igSetWindowFontScale",
+            "igSliderFloat",
+            "igSliderInt",
+            "igSmallButton",
+            "igSpacing",
+            "igTextColoredV",
+            "igTextDisabledV",
+            "igTextUnformatted",
+            "igTextV",
+        };
+
+        constexpr int kCount = static_cast<int>(sizeof(kRequired) / sizeof(kRequired[0]));
+
+        std::string missing;
+        int         present = 0;
+        for (const char* name : kRequired) {
+            if (::GetProcAddress(menuFramework, name)) {
+                ++present;
+                continue;
+            }
+            if (!missing.empty()) {
+                missing += ", ";
+            }
+            missing += name;
+        }
+
+        if (missing.empty()) {
+            SKSE::log::info("UI: framework audit - {}/{} ImGui entry points present", present, kCount);
+            return true;
+        }
+
+        SKSE::log::error("UI: the installed SKSE Menu Framework is missing {} of the {} ImGui entry points this menu calls; not registering the window, because the first frame would jump to a null pointer. Missing: {}",
+            kCount - present, kCount, missing);
+        return false;
+    }
+
     void Initialize()
     {
         const float frameworkVersion = SKSEMenuFramework::GetMenuFrameworkVersion();
+        SKSE::log::info("UI: SKSE Menu Framework reports version {:.2f}", frameworkVersion);
+
+        if (!FrameworkExportsPresent()) {
+            return;
+        }
 
         SKSEMenuFramework::SetSection("SlaveTats");
         SKSEMenuFramework::AddSectionItem(Tr("$STM_Menu_TattooManager"), RenderMenu);
@@ -2437,6 +2604,7 @@ namespace stm::ui
 
     void __stdcall RenderMenu()
     {
+        stm::log::Stage("menu:enter");
         PumpResults();
         // Same watchdog as the floating window: whichever of the two is open,
         // a sync SlaveTatsNG dropped is finished while the user is looking.
@@ -2447,6 +2615,7 @@ namespace stm::ui
 
     void __stdcall RenderSettings()
     {
+        stm::log::Stage("settings:enter");
         PumpResults();
         ops::pending::Tick();
         RefreshLibraryOnOpen();
@@ -2463,6 +2632,8 @@ namespace stm::ui
             s_canCloseWithToggleKey = false;
             return;
         }
+
+        stm::log::Stage("window:enter");
 
         // Drain before any tab is drawn, so a result produced while the Settings
         // tab was active is not stuck in the board until the user switches back.

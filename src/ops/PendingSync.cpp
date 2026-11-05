@@ -104,6 +104,8 @@ namespace stm::ops::pending
         // Game thread. Reads the flag the engine never re-reads, and acts on it.
         void Sample()
         {
+            stm::log::Stage("task:sync-sample");
+
             struct FlightGuard
             {
                 ~FlightGuard() { g_inFlight.store(false); }
