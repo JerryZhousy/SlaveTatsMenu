@@ -18,11 +18,12 @@ namespace stm::ui
         // area filter: 0 = all, 1..4 = Body / Face / Hands / Feet (default: 1 = Body)
         int         areaIndex = 1;
 
-        // Mod / section picked in panel 1. The tattoo list (panel 2) only exists
-        // while a choice is active, so the flag is kept separately from the
-        // filter string: sectionChosen == false means "nothing picked, panel 2
-        // hidden", while sectionChosen == true with an empty filter means the
-        // "[all mods]" entry is the active choice.
+        // Which view the left column is showing. That column is a two-step
+        // drill-down: sectionChosen == false means the mod list is on screen,
+        // sectionChosen == true means the mod list has been replaced by the
+        // tattoo list of sectionFilter (an empty filter = the "[all mods]"
+        // entry was picked). Going back only flips the flag, so the current
+        // selection and its editor values survive the trip.
         bool        sectionChosen = false;
         std::string sectionFilter;
         char        modSearch[128] = {};

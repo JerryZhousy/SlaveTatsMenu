@@ -4,6 +4,7 @@
 #include "bridge/KnownTargets.h"
 #include "bridge/SlaveTatsNg.h"
 #include "core/Config.h"
+#include "core/Log.h"
 #include "core/Translation.h"
 #include "core/Tasks.h"
 #include "data/SlotSnapshot.h"
@@ -556,9 +557,9 @@ namespace stm::ui
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", Tr("$STM_Heading_Mods"));
             ImGui::Separator();
 
-            if (!state.sectionChosen) {
-                ImGui::TextDisabled("%s", Tr("$STM_Hint_PickMod"));
-            }
+            // This panel is only on screen while nothing is picked, so the hint
+            // is always the right thing to say at the top of the list.
+            ImGui::TextDisabled("%s", Tr("$STM_Hint_PickMod"));
 
             // The clear button is as wide as its (large) glyph needs; the search
             // box takes whatever is left so the two never overlap.
@@ -574,16 +575,18 @@ namespace stm::ui
 
             const auto& sections = db.QuerySections(CurrentArea(), state.modSearch);
 
-            // Picking an entry selects it; clicking the current pick again
-            // deselects it and takes the tattoo list away with it.
+            // Drilling in is one-way: the entry replaces this list with its
+            // tattoos, and the back button in the tattoo view is the only way
+            // out. The tattoo that is already selected is deliberately left
+            // alone, so stepping back to look at another mod does not throw
+            // away the colour, alpha and slot the user had already dialled in.
             const bool allSelected = state.sectionChosen && state.sectionFilter.empty();
             if (ImGui::Selectable(Tr("$STM_Filter_AllMods"), allSelected)) {
-                state.sectionChosen = !allSelected;
+                state.sectionChosen = true;
                 state.sectionFilter.clear();
-                state.hasSelection = false;
-                UpdatePreview("");
             }
 
+            stm::log::Stage("mod-list:rows");
             ListClipper clipper(static_cast<int>(sections.size()));
             int start = 0;
             int end = 0;
@@ -594,10 +597,8 @@ namespace stm::ui
                     const bool selected = state.sectionChosen && state.sectionFilter == section.name;
 
                     if (ImGui::Selectable((label + "##sec_" + section.name).c_str(), selected)) {
-                        state.sectionChosen = !selected;
-                        state.sectionFilter = selected ? std::string() : section.name;
-                        state.hasSelection = false;
-                        UpdatePreview("");
+                        state.sectionChosen = true;
+                        state.sectionFilter = section.name;
                     }
                 }
             }
@@ -629,10 +630,21 @@ namespace stm::ui
 
             const auto& tattoos = db.Query(CurrentArea(), state.sectionFilter, state.tattooSearch);
 
+            // This list now sits in the column the mod list used to occupy, so
+            // the first row carries both the way back and the name of the mod
+            // whose tattoos are on screen. Going back only flips the view: the
+            // selected tattoo, its editor values and the preview all survive.
+            const char* backLabel = Tr("$STM_Back");
+            if (ImGui::Button(backLabel, ButtonSize(backLabel))) {
+                state.sectionChosen = false;
+            }
+            ImGui::SameLine();
+
             const std::string title = state.sectionFilter.empty()
                 ? std::string(Tr("$STM_Heading_Tattoos")) + " (" + std::to_string(tattoos.size()) + ")"
                 : std::string("2. [") + state.sectionFilter + "] (" + std::to_string(tattoos.size()) + ")";
 
+            ImGui::AlignTextToFramePadding();
             ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.7f, 1.0f), "%s", title.c_str());
             ImGui::Separator();
 
@@ -670,7 +682,16 @@ namespace stm::ui
                         const bool selected = state.hasSelection && state.selected.section == item.section && state.selected.name == item.name;
 
                         if (ImGui::Selectable((label + "##tat_" + item.section + "_" + item.name).c_str(), selected)) {
-                            SeedEditorFrom(item);
+                            // Clicking the row that is already picked clears it
+                            // again, so the inspector can be emptied without
+                            // leaving the list. Nothing is applied or removed by
+                            // this - it only drops the pending edit.
+                            if (selected) {
+                                state.hasSelection = false;
+                                UpdatePreview("");
+                            } else {
+                                SeedEditorFrom(item);
+                            }
                         }
                     }
                 }
@@ -1543,13 +1564,16 @@ namespace stm::ui
                 Tr("$STM_RegisteredActors"),
                 KnownTargetCountCached());
 
+            stm::log::Stage("main:target-row");
             DrawTargetRow();
+            stm::log::Stage("main:area-row");
             DrawAreaRow();
             ImGui::Separator();
 
-            // Panel 2 only exists once a mod has been picked in panel 1. While
-            // it is hidden, the inspector keeps the width it has in the
-            // three-column layout and the mod list absorbs the freed space.
+            // One list column, then the inspector. The column is as wide as the
+            // old mod + tattoo pair (240 + 16 + 280) whether it is listing the
+            // mods or the tattoos of a mod, so drilling in and stepping back
+            // never moves the inspector.
             const float available = ImGui::GetContentRegionAvail().x;
             const float availY = ImGui::GetContentRegionAvail().y;
 
@@ -1558,35 +1582,34 @@ namespace stm::ui
             const float statusBarHeight = ImGui::GetTextLineHeightWithSpacing() + 8.0f;
             const float panelHeight = std::max(380.0f, availY - statusBarHeight);
 
-            // Three columns need 240 + 280 + 380 + gaps. On a narrower window the
-            // tattoo list gives up width first (down to 180) - the old fixed 400 px
-            // inspector minimum pushed the whole right column out of the window.
-            constexpr float col1Fixed = 240.0f;
-            constexpr float col2Max = 280.0f;
-            constexpr float col2Min = 180.0f;
+            // 536 is that pair at full width, 436 the same pair with the tattoo
+            // list squeezed to its old 180 px minimum. On a narrower window the
+            // list column gives up width first, so the inspector keeps its
+            // 380 px instead of being pushed out of the window.
+            constexpr float col1Max = 536.0f;
+            constexpr float col1Min = 436.0f;
             constexpr float minInspector = 380.0f;
+            constexpr float gap = 8.0f;
 
-            const float gaps = state.sectionChosen ? 16.0f : 8.0f;
-            float       col2 = state.sectionChosen ? col2Max : 0.0f;
-            float       col3 = available - col1Fixed - col2 - gaps;
-
-            if (state.sectionChosen && col3 < minInspector && col2 > col2Min) {
-                col2 = std::max(col2Min, col2 - (minInspector - col3));
-                col3 = available - col1Fixed - col2 - gaps;
+            float col1 = col1Max;
+            float col3 = available - col1 - gap;
+            if (col3 < minInspector) {
+                col1 = std::max(col1Min, available - gap - minInspector);
+                col3 = available - col1 - gap;
             }
             col3 = std::max(240.0f, col3);
 
-            const float col1 = state.sectionChosen
-                ? col1Fixed
-                : std::max(col1Fixed, available - gaps - col3);
-
-            DrawSectionPanel(col1, panelHeight);
             if (state.sectionChosen) {
-                ImGui::SameLine();
-                DrawTattooPanel(col2, panelHeight);
+                stm::log::Stage("main:tattoo-list");
+                DrawTattooPanel(col1, panelHeight);
+            } else {
+                stm::log::Stage("main:mod-list");
+                DrawSectionPanel(col1, panelHeight);
             }
             ImGui::SameLine();
+            stm::log::Stage("main:inspector");
             DrawInspector(col3, panelHeight);
+            stm::log::Stage("main:status");
             DrawStatusLine();
         }
         ImGuiKey DirectInputToImGuiKey(std::uint32_t a_dik)
