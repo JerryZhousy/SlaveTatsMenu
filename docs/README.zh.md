@@ -203,6 +203,7 @@ ProbeIntervalMs = 1000
 ProbeArea = Body
 ProbeSlots = 12
 CallTrace = 0           ; 调用追踪，默认关闭（它会改写别的插件的只读表）
+StageLog = 0            ; 逐帧记录菜单阶段；默认只在窗口打开后的 2 秒内记录
 ```
 
 ## 诊断探针

@@ -92,6 +92,8 @@ ProbeArea = Body
 ProbeSlots = 12
 CallTrace = 0           ; log which module called each mutating SlaveTatsNG function
                         ; (opt-in: it patches another plugin's read-only table)
+StageLog = 0            ; log every frame's stage for the whole session; on by
+                        ; default only for the 2 s after a window opens
 ```
 
 Presets are plain JSON, one file per preset, in `Data/SKSE/Plugins/SlaveTatsMenu/Presets/`. They can be edited by hand or handed to someone else.

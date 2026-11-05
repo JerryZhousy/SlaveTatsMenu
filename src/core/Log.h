@@ -28,6 +28,14 @@ namespace stm::log
         spdlog::set_pattern("[%T.%e] [%=5t] [%L] %v"s);
     }
 
+    // Set from [Debug] StageLog: trace every stage change for the whole
+    // session, not only the seconds around a window opening.
+    inline bool& StageVerbose()
+    {
+        static bool s_verbose = false;
+        return s_verbose;
+    }
+
     // Crash breadcrumb.
     //
     // The menu framework calls the window callback from inside the game's own
@@ -40,9 +48,11 @@ namespace stm::log
     // steady-state frame costs one pointer compare. Every call site passes a
     // string literal, so the comparison is on the pointer, not on the text.
     //
-    // A menu that redraws every frame still changes stage several times per
-    // frame, so the output is capped per second: enough to record the steps that
-    // lead into a crash, not enough to bury the rest of the log.
+    // Tracing is on for the first two seconds after a window opens, and off
+    // afterwards. A crash on open is the case this exists for, and a steady
+    // menu changes stage twelve times per frame: measured on a real session,
+    // an always-on trace was 221 of 252 log lines. StageLog=1 in the INI
+    // switches the full trace back on for a session that has to be chased.
     inline void Stage(const char* a_stage)
     {
         static thread_local const char* s_last = nullptr;
@@ -51,12 +61,27 @@ namespace stm::log
         }
         s_last = a_stage;
 
+        const auto now = std::chrono::steady_clock::now();
+
+        // A gap between frames means the menu was just opened, or the game came
+        // back from a load screen - the two moments a fresh trace is worth
+        // having. Nothing else re-arms it.
+        static thread_local std::chrono::steady_clock::time_point s_lastCall{};
+        static thread_local std::chrono::steady_clock::time_point s_traceUntil{};
+        if (s_lastCall.time_since_epoch().count() == 0 || (now - s_lastCall) > std::chrono::milliseconds(500)) {
+            s_traceUntil = now + std::chrono::seconds(2);
+        }
+        s_lastCall = now;
+
+        if (!StageVerbose() && now > s_traceUntil) {
+            return;
+        }
+
         constexpr int kLinesPerSecond = 20;
 
         static thread_local std::chrono::steady_clock::time_point s_windowStart{};
         static thread_local int                                   s_inWindow = 0;
 
-        const auto now = std::chrono::steady_clock::now();
         if (s_windowStart.time_since_epoch().count() == 0 || (now - s_windowStart) > std::chrono::seconds(1)) {
             s_windowStart = now;
             s_inWindow = 0;

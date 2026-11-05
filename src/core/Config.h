@@ -72,6 +72,11 @@ namespace stm
         // turn it on only while actively attributing a ledger change.
         bool callTraceEnabled = false;
 
+        // Writes every frame stage to the log, not just the two seconds after a
+        // window opens (see log::Stage). Turn it on when chasing a crash that
+        // happens well into a session, at the cost of a busy log.
+        bool stageLog = false;
+
         static Config& Get();
 
         // Reads the INI; writes a default one if it is missing or unreadable.

@@ -1,4 +1,5 @@
 #include "core/Config.h"
+#include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Translation.h"
 
@@ -66,6 +67,8 @@ namespace stm
         probeArea = ini.GetValue("Debug", "ProbeArea", "Body");
         probeSlots = std::clamp(static_cast<int>(ini.GetLongValue("Debug", "ProbeSlots", 12)), 1, 24);
         callTraceEnabled = ini.GetBoolValue("Debug", "CallTrace", false);
+        stageLog = ini.GetBoolValue("Debug", "StageLog", false);
+        log::StageVerbose() = stageLog;
 
         SKSE::log::info("Config: loaded {} (ToggleKey=0x{:X}, Lang={}, WinAlpha={:.2f}, FontScale={:.2f}, SlotPolicy={})",
             pathStr,
@@ -115,6 +118,7 @@ namespace stm
         ini.SetValue("Debug", "ProbeArea", probeArea.c_str());
         ini.SetLongValue("Debug", "ProbeSlots", probeSlots);
         ini.SetBoolValue("Debug", "CallTrace", callTraceEnabled);
+        ini.SetBoolValue("Debug", "StageLog", stageLog);
 
         const SI_Error rc = ini.SaveFile(pathStr.c_str());
         if (rc < 0) {
